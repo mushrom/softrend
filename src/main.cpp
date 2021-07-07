@@ -281,16 +281,158 @@ struct shadingUniforms {
 	float xoff;
 };
 
+template <typename T>
+void drawLine(framebuffer<T> *fb, T color, int x1, int y1, int x2, int y2) {
+	float dx = x2 - x1;
+	float dy = y2 - y1;
+	float unit = (abs(dx) > abs(dy))? abs(dx) : abs(dy);
+	dx /= unit;
+	dy /= unit;
+
+	for (int i = 0; i <= unit && i < fb->width; i++) {
+		int x = x1 + i*dx;
+		int y = y1 + i*dy;
+
+		if (x < 0 || y < 0 || x >= fb->width || y >= fb->height)
+			continue;
+
+		fb->setPixel(x, y, color);
+	}
+}
+
+template <typename T>
+void drawHorizontalLine(framebuffer<T> *fb, // TODO: texture parameter
+                        int x1, int x2, int y,
+                        vec2 uva, vec2 uvb)
+{
+	if (y < 0 || y >= fb->height) return;
+
+	int start = (x1 < x2)? x1 : x2;
+	int end   = (x1 < x2)? x2 : x1;
+	int diff  = max(1, end - start);
+
+	vec2 suv = (x1 < x2)? uva : uvb;
+	vec2 euv = (x1 < x2)? uvb : uva;
+
+	int bostart = clamp(start, 0, (int)fb->width-1);
+	int boend   = clamp(end,   0, (int)fb->width-1);
+
+	for (int x = bostart; x != boend; x++) {
+		float amount = float(x - start)/diff;
+		vec2 uv = mix(suv, euv, amount);
+
+		auto c = getTexel(uv);
+		fb->setPixel(x, y, c);
+	}
+};
+
+template <typename T>
+void drawFlatTopTri(framebuffer<T> *fb, const geomOutTri& t) {
+	auto& vs = t.vertices;
+
+	// first is assumed to be bottom vert
+	line left(vs[0].screenpos, vs[1].screenpos);
+	line right(vs[0].screenpos, vs[2].screenpos);
+
+	int start = min((int)fb->height-1, vs[0].screenpos.second);
+	int end   = max(0, vs[1].screenpos.second);
+
+	// loop towards the top, decrementing
+	for (int y = start; y >= end; y--) {
+		Coord l = left.atY(y);
+		Coord r = right.atY(y);
+
+		vec2 luv = mix(vs[0].uv, vs[1].uv, left.unitFromY(y));
+		vec2 ruv = mix(vs[0].uv, vs[2].uv, right.unitFromY(y));
+
+		drawHorizontalLine(fb, l.first, r.first, y, luv, ruv);
+	}
+};
+
+template <typename T>
+void drawFlatBottomTri(framebuffer<T> *fb, const geomOutTri& t) {
+	auto& vs = t.vertices;
+
+	// first is assumed to be top vert
+	line left(vs[0].screenpos, vs[1].screenpos);
+	line right(vs[0].screenpos, vs[2].screenpos);
+
+	int start = max(0, vs[0].screenpos.second);
+	int end   = min((int)fb->height-1, vs[1].screenpos.second);
+
+	// loop towards the bottom, incrementing
+	for (int y = start; y <= end; y++) {
+		Coord l = left.atY(y);
+		Coord r = right.atY(y);
+
+		vec2 luv = mix(vs[0].uv, vs[1].uv, left.unitFromY(y));
+		vec2 ruv = mix(vs[0].uv, vs[2].uv, right.unitFromY(y));
+
+		drawHorizontalLine(fb, l.first, r.first, y, luv, ruv);
+	}
+};
+
+template <typename T>
+void drawTriangle(framebuffer<T> *fb, const geomOutTri& t) {
+	geomOutTri temp = t;
+	auto& vs = temp.vertices;
+
+	// 9 compares, unrollable, it's fiiiine
+	// sort by Y
+	for (int i = 0; i < 2; i++) {
+		for (int k = 0; k < 2-i; k++) {
+			if (vs[k].screenpos.second > vs[k+1].screenpos.second) {
+				std::swap(vs[k], vs[k+1]);
+			}
+		}
+	}
+
+	if (vs[0].screenpos.second == vs[1].screenpos.second) {
+		//Tri foo = {temp[2], temp[0], temp[1]};
+		geomOutTri foo = {vs[2], vs[0], vs[1]};
+		drawFlatTopTri(fb, foo);
+
+	} else if (vs[1].screenpos.second == vs[2].screenpos.second) {
+		drawFlatBottomTri(fb, temp);
+
+	} else {
+		line longline(vs[0].screenpos, vs[2].screenpos);
+
+		float amt = longline.unitFromY(vs[1].screenpos.second);
+		vertexOut c = {
+			.screenpos = longline.atY(vs[1].screenpos.second),
+			.uv        = mix(vs[0].uv, vs[2].uv, amt),
+			.depth     = mix(vs[0].depth, vs[2].depth, amt),
+		};
+
+		geomOutTri b = {vs[2], c, vs[1]};
+
+		// can use temp for top tri, drawFlatBottomTri will stop at vs[1],
+		// which is the second smallest (and so the intersection point)
+		drawFlatBottomTri(fb, temp);
+		drawFlatTopTri(fb, b);
+	}
+};
+
+template <typename T>
+void drawTriangleLines(framebuffer<T> *fb, T color, const geomOutTri& t) {
+	auto& vs = t.vertices;
+
+	for (int k = 0; k < 3; k++) {
+		int j = k;
+		int m = (k+1)%3;
+
+		drawLine(fb, color, vs[j].screenpos.first, vs[j].screenpos.second,
+		                    vs[m].screenpos.first, vs[m].screenpos.second);
+	}
+}
+
 void drawBufferTriangles(vertex_buffer& vertbuf,
                          sdl2_backend& back,
                          shadingUniforms& uniforms)
 {
 	std::vector<vertexOut> vertout;
 	auto fb = back.getFramebuffer();
-
-	//shadingUniforms uniforms;
-
-	//mat4 p = perspective(M_PI/2.f, 16.f/9.f, 0.1f, 100.f);
 
 	//printf("zoom: %g\n", uniforms.zoom);
 
@@ -300,8 +442,6 @@ void drawBufferTriangles(vertex_buffer& vertbuf,
 		vec2& uv   = vertbuf.uvs[em];
 
 		vec4 temp = (vec4){vert[0], vert[1], vert[2], 1.f};
-		//temp = mult(p, 10*mult(v, temp));
-		//temp = mult(p, mult(v, temp));
 		temp = mult(uniforms.p,
 		            mult(uniforms.v,
 		            mult(uniforms.rotx,
@@ -320,24 +460,7 @@ void drawBufferTriangles(vertex_buffer& vertbuf,
 		});
 	}
 
-	auto drawLine = [&] (int x1, int y1, int x2, int y2) {
-		float dx = x2 - x1;
-		float dy = y2 - y1;
-		float unit = (abs(dx) > abs(dy))? abs(dx) : abs(dy);
-		dx /= unit;
-		dy /= unit;
-
-		for (int i = 0; i <= unit && i < fb->width; i++) {
-			int x = x1 + i*dx;
-			int y = y1 + i*dy;
-
-			if (x < 0 || y < 0 || x >= fb->width || y >= fb->height)
-				continue;
-
-			fb->setPixel(x, y, (ubvec4){0xff, 0xff, 0xff, 0xff});
-		}
-	};
-
+	/*
 	ubvec4 color = (ubvec4){0xff, 0xff, 0xff, 0xff};
 	int id = 0;
 
@@ -349,214 +472,30 @@ void drawBufferTriangles(vertex_buffer& vertbuf,
 		color = (ubvec4){0xff, b, g, r};
 		id++;
 	};
-
-	auto drawHorizontalLine = [&](int x1, int x2, int y, vec2 uva, vec2 uvb) {
-		if (y < 0 || y >= fb->height) return;
-
-		//x1 = clamp(x1, 0, (int)fb->width-1);
-		//x2 = clamp(x2, 0, (int)fb->width-1);
-		//int dir = (x1 < x2)? 1 : -1;
-
-		int start = (x1 < x2)? x1 : x2;
-		int end   = (x1 < x2)? x2 : x1;
-		int diff  = max(1, end - start);
-
-		vec2 suv = (x1 < x2)? uva : uvb;
-		vec2 euv = (x1 < x2)? uvb : uva;
-
-		int bostart = clamp(start, 0, (int)fb->width-1);
-		int boend   = clamp(end,   0, (int)fb->width-1);
-
-		for (int x = bostart; x != boend; x++) {
-			float amount = float(x - start)/diff;
-			vec2 uv = mix(suv, euv, amount);
-
-			auto c = getTexel(uv);
-			fb->setPixel(x, y, c);
-		}
-
-		/*
-		   if (x1 < x2) {
-		   for (int x = x1; x != x2; x++) {
-		   fb->setPixel(x, y, color);
-		   }
-
-		   } else {
-		   for (int x = x1; x != x2; x--) {
-		   fb->setPixel(x, y, color);
-		   }
-		   }
-		   */
-	};
-
-	// first is assumed to be bottom vert
-	auto drawFlatTopTri = [&] (const geomOutTri& t) {
-		auto& vs = t.vertices;
-
-		line left(vs[0].screenpos, vs[1].screenpos);
-		line right(vs[0].screenpos, vs[2].screenpos);
-
-		int start = min((int)fb->height-1, vs[0].screenpos.second);
-		int end   = max(0, vs[1].screenpos.second);
-
-		// loop towards the top, decrementing
-		for (int y = start; y >= end; y--) {
-			Coord l = left.atY(y);
-			Coord r = right.atY(y);
-
-			vec2 luv = mix(vs[0].uv, vs[1].uv, left.unitFromY(y));
-			vec2 ruv = mix(vs[0].uv, vs[2].uv, right.unitFromY(y));
-
-			drawHorizontalLine(l.first, r.first, y, luv, ruv);
-		}
-	};
-
-	// first is assumed to be top vert
-	auto drawFlatBottomTri = [&] (const geomOutTri& t) {
-		auto& vs = t.vertices;
-
-		line left(vs[0].screenpos, vs[1].screenpos);
-		line right(vs[0].screenpos, vs[2].screenpos);
-
-		int start = max(0, vs[0].screenpos.second);
-		int end   = min((int)fb->height-1, vs[1].screenpos.second);
-
-		// loop towards the bottom, incrementing
-		for (int y = start; y <= end; y++) {
-			Coord l = left.atY(y);
-			Coord r = right.atY(y);
-
-			vec2 luv = mix(vs[0].uv, vs[1].uv, left.unitFromY(y));
-			vec2 ruv = mix(vs[0].uv, vs[2].uv, right.unitFromY(y));
-
-			drawHorizontalLine(l.first, r.first, y, luv, ruv);
-		}
-	};
-
-	auto drawTriangle = [&] (const geomOutTri& t) {
-		/*
-		   for (int k = 0; k < 3; k++) {
-		   int j = k;
-		   int m = (k+1)%3;
-
-		   drawLine(t[j].first, t[j].second, t[m].first, t[m].second);
-		   }
-		   */
-
-		geomOutTri temp = t;
-		auto& vs = temp.vertices;
-		newcolor();
-
-		// 9 compares, unrollable, it's fiiiine
-		// sort by Y
-		for (int i = 0; i < 2; i++) {
-			for (int k = 0; k < 2-i; k++) {
-				if (vs[k].screenpos.second > vs[k+1].screenpos.second) {
-					std::swap(vs[k], vs[k+1]);
-				}
-			}
-		}
-
-		if (vs[0].screenpos.second == vs[1].screenpos.second) {
-			//Tri foo = {temp[2], temp[0], temp[1]};
-			geomOutTri foo = {vs[2], vs[0], vs[1]};
-			drawFlatTopTri(foo);
-
-		} else if (vs[1].screenpos.second == vs[2].screenpos.second) {
-			drawFlatBottomTri(temp);
-
-		} else {
-#if 1
-			//puts("general");
-			/*
-			   auto dist = [](const Coord& a, const Coord& b) {
-			   return abs(b.first - a.first) + abs(b.second - a.second);
-			   };
-
-			   int da = dist(temp[0], temp[1]);
-			   int db = dist(temp[0], temp[2]);
-			   int shortest = (da <  db)? 1 : 2;
-			   int longest  = (da >= db)? 1 : 2;
-			   */
-
-			line longline(vs[0].screenpos, vs[2].screenpos);
-			//Coord c = longline.atY(vs[1].second);
-
-			float amt = longline.unitFromY(vs[1].screenpos.second);
-			vertexOut c = {
-				.screenpos = longline.atY(vs[1].screenpos.second),
-				.uv        = mix(vs[0].uv, vs[2].uv, amt),
-				.depth     = mix(vs[0].depth, vs[2].depth, amt),
-			};
-
-			/*
-			   int ax = temp[0].first;
-			   int bx = temp[shortest].first;
-			   int cx = temp[longest].first;
-			   int ay = temp[0].second;
-			   int by = temp[shortest].second;
-			   int cy = temp[longest].second;
-
-			   int dx = ax + ((by - ay)/(cy - ay)) * (cx - ax);
-			   Coord c = {dx, by};
-			   */
-
-			//Tri a = {temp[0], temp[shortest], c};
-			//Tri b = {temp[2], c, temp[1]};
-			geomOutTri b = {vs[2], c, vs[1]};
-
-			drawFlatBottomTri(temp);
-			drawFlatTopTri(b);
-#endif
-		}
-	};
-
-	auto drawTriangleLines = [&] (const Tri& t) {
-		for (int k = 0; k < 3; k++) {
-			int j = k;
-			int m = (k+1)%3;
-
-			drawLine(t[j].first, t[j].second, t[m].first, t[m].second);
-		}
-	};
+	*/
 
 	std::vector<geomOutTri> geometryTris;
 	for (size_t i = 0; i < vertout.size(); i += 3) {
 		geometryTris.push_back((geomOutTri) {
-				vertout[i], vertout[i+1], vertout[i+2]
-				});
-
-		/*
-		   geometryTris.push_back((geomOutTri) {
-		   .triangle = {
-		   vertout[i].screenpos,
-		   vertout[i+1].screenpos,
-		   vertout[i+2].screenpos
-		   },
-
-		   .depth = {
-		   vertout[i].depth,
-		   vertout[i+1].depth,
-		   vertout[i+2].depth
-		   }
-		   });
-		   */
-
+			vertout[i], vertout[i+1], vertout[i+2]
+		});
 	}
 
-	std::sort(geometryTris.begin(), geometryTris.end(), [](geomOutTri& a, geomOutTri& b) {
-			float aavg = (a.vertices[0].depth + a.vertices[1].depth + a.vertices[2].depth) / 3.f;
-			float bavg = (b.vertices[0].depth + b.vertices[1].depth + b.vertices[2].depth) / 3.f;
+	std::sort(geometryTris.begin(), geometryTris.end(),
+		[] (geomOutTri& a, geomOutTri& b) {
+			auto& av = a.vertices;
+			auto& bv = b.vertices;
+			float aavg = (av[0].depth + av[1].depth + av[2].depth) / 3.f;
+			float bavg = (bv[0].depth + bv[1].depth + bv[2].depth) / 3.f;
 			return aavg > bavg;
-			});
+		});
 
 	for (size_t i = 0; i < geometryTris.size(); i++) {
 		//printf("coord: (%d, %d)\n", geometryTris[i].vertices[0].screenpos.first, geometryTris[i].vertices[0].screenpos.second);
 		//printf("depth: %g\n", geometryTris[i].vertices[0].depth);
 		auto& geom = geometryTris[i];
-		drawTriangle(geom);
+		drawTriangle(fb, geom);
 	}
-
 }
 
 int main(void) {
