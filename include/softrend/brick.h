@@ -6150,7 +6150,7 @@ static uint8_t _179_small_ppm_pixels[] = {
         
 };
 
-struct {
+static struct {
     uint32_t width;
     uint32_t height;
     uint8_t *pixels;

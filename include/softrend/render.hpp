@@ -29,11 +29,15 @@ class framebuffer {
 			data[y*pitch + x] = value;
 		}
 
-		inline void clear(void) {
+		inline T getPixel(size_t x, size_t y) const {
+			return data[y*pitch + x];
+		}
+
+		inline void clear(T val = 0) {
 			size_t n = height*pitch;
 
 			for (size_t i = 0; i < n; i++) {
-				data[i] = T(0xff);
+				data[i] = val;
 			}
 		}
 };

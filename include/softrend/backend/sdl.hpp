@@ -20,12 +20,18 @@ class sdl2_backend {
 			}
 
 			//renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-			renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
+			//renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
 			//renderer = SDL_CreateRenderer(window, -1, 0);
-			surface = SDL_CreateRGBSurfaceWithFormat(0, width, height,
-					32, SDL_PIXELFORMAT_RGBA8888);
+			//surface = SDL_CreateRGBSurfaceWithFormat(0, width, height,
+			//		32, SDL_PIXELFORMAT_RGBA8888);
 
-			fb.data = (ubvec4*)surface->pixels;
+			surface = SDL_GetWindowSurface(window);
+			// TODO: check surface format and pitch, need 32 bit rgb
+			renderer = SDL_CreateSoftwareRenderer(surface);
+			SDL_SetRenderDrawColor(renderer, 0x0, 0x0, 0x0, 0x0);
+			SDL_RenderClear(renderer);
+
+			fb.data = (uint32_t*)surface->pixels;
 			fb.width = width;
 			fb.height = height;
 			fb.pitch = surface->pitch/4;
@@ -35,18 +41,22 @@ class sdl2_backend {
 		SDL_Surface *surface;
 		SDL_Renderer *renderer;
 
-		framebuffer<ubvec4> fb;
+		framebuffer<uint32_t> fb;
 
 		// TODO: vector type
-		framebuffer<ubvec4> *getFramebuffer(void) {
+		framebuffer<uint32_t> *getFramebuffer(void) {
 			return &fb;
 		}
 
 		void swapFramebuffer(void) {
-			SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surface);
-			SDL_RenderCopy(renderer, tex, NULL, NULL);
-			SDL_RenderPresent(renderer);
-			SDL_DestroyTexture(tex);
+			//SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surface);
+			//SDL_RenderCopy(renderer, tex, NULL, NULL);
+			//SDL_RenderPresent(renderer);
+			//SDL_DestroyTexture(tex);
+
+			// rendering to the window surface is an order of magnitude faster :O
+			// not too surprising I suppose
+			SDL_UpdateWindowSurface(window);
 		}
 };
 
