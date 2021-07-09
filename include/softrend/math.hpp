@@ -31,6 +31,7 @@ typedef uint8_t v32ub __attribute__((vector_size (32)));
 typedef v2sf vec2;
 typedef v3sf vec3;
 typedef v4sf vec4;
+typedef vec4 quat; // glm-like quaternion
 
 typedef v16sf mat4;
 typedef mat4  mat3;
@@ -71,8 +72,20 @@ static inline mat4 mult(const vec4& v, const mat4& mat) {
 }
 
 static inline mat4 mult(const mat4& a, const mat4& b) {
-	// TODO
-	return a;
+	mat4 ret;
+
+	for (int i = 0; i < 4; i++) {
+		for (int k = 0; k < 4; k++) {
+			vec4 arow = (vec4) { a[i], a[4+i], a[8+i], a[12+i] };
+			vec4 bcol = (vec4) { b[4*k], a[4*k+1], a[4*k+2], a[4*k+3] };
+
+			vec4 asdf = arow*bcol;
+			//ret[i*4 + k] = asdf[0] + asdf[1] + asdf[2] + asdf[3];
+			ret[k*4 + i] = asdf[0] + asdf[1] + asdf[2] + asdf[3];
+		}
+	}
+
+	return ret;
 }
 
 static inline float dot(const vec4& a, const vec4& b) {

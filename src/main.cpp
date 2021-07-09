@@ -194,6 +194,8 @@ using Tri = std::array<Coord, 3>;
 
 struct vertexOut {
 	Coord screenpos;
+	vec3 position;
+	vec3 normal;
 	vec2 uv;
 	float depth;
 };
@@ -203,8 +205,10 @@ struct vertexOut mix(const vertexOut& a, const vertexOut& b, float amt) {
 	return (vertexOut) {
 		// no screen position interpolation
 		//.screenpos = mix(a.screenpos, b.screenpos, amt),
-		.uv        = mix(a.uv, b.uv, amt),
-		.depth     = mix(a.depth, b.depth, amt)
+		.position = mix(a.position, b.position, amt),
+		.normal   = mix(a.normal, b.normal, amt),
+		.uv       = mix(a.uv, b.uv, amt),
+		.depth    = mix(a.depth, b.depth, amt)
 	};
 }
 
@@ -274,7 +278,8 @@ struct line {
 };
 
 #include <softrend/brick.h>
-ubvec4 getTexel(vec2 uv) {
+static inline
+uint32_t getTexel(vec2 uv) {
 	int width = _179_small_ppm_img.width;
 	int height = _179_small_ppm_img.height;
 
@@ -288,14 +293,17 @@ ubvec4 getTexel(vec2 uv) {
 		+ 3*(y*width)
 		+ 3*x;
 
-	return (ubvec4) {0xff, idx[2], idx[1], idx[0]};
+	//return (ubvec4) {0xff, idx[2], idx[1], idx[0]};
+	return idx[2] | (idx[1] << 8) | (idx[0] << 16);
 }
 
 struct shadingUniforms {
 	mat4 p;
 	mat4 v;
+	mat4 m;
 	mat4 rotx;
 	mat4 roty;
+	vec3 cameraPos;
 	float zoom;
 	float xoff;
 };
@@ -341,17 +349,26 @@ void drawHorizontalLine(fbPair<T, F>& buffers, // TODO: texture parameter
 	for (int x = bostart; x != boend; x++) {
 		float amount = float(x - start)/diff;
 
-		vec2 uv = mix(startvert.uv, endvert.uv, amount);
+		//vertexOut vertattr = mix(startvert, endvert, amount);
 		float depth = mix(startvert.depth, endvert.depth, amount);
 
 		if (depth < buffers.depth->getPixel(x, y)) {
+			vec2 uv = mix(startvert.uv, endvert.uv, amount);
 			//uint8_t yolo = 0x10*depth;
 			//ubvec4 meh = {0xff, yolo, yolo, yolo};
 			//buffers.color->setPixel(x, y, meh);
 			auto c = getTexel(uv);
-			//buffers.color->setPixel(x, y, c);
-			uint32_t px = (c[1] << 0) | (c[2] << 8) | (c[3] << 16);
-			buffers.color->setPixel(x, y, px);
+			//uint32_t c = uint32_t(0xff*uv[0]) | (uint32_t(0xff*uv[1]) << 8);
+			/*
+			uint32_t c =
+				uint32_t(0xff*(fabs(vertattr.position[0]) / 100))
+				| (uint32_t(0xff*(fabs(vertattr.position[1]) / 100)) << 8)
+				| (uint32_t(0xff*(fabs(vertattr.position[2]) / 100)) << 8)
+				;
+				*/
+			buffers.color->setPixel(x, y, c);
+			//uint32_t px = (c[1] << 0) | (c[2] << 8) | (c[3] << 16);
+			//buffers.color->setPixel(x, y, px);
 			buffers.depth->setPixel(x, y, depth);
 		}
 	}
@@ -434,11 +451,17 @@ void drawTriangle(fbPair<T, F>& buffers, const geomOutTri& t) {
 		line longline(vs[0].screenpos, vs[2].screenpos);
 
 		float amt = longline.unitFromY(vs[1].screenpos.second);
+		vertexOut c = mix(vs[0], vs[2], amt);
+		c.screenpos = longline.atY(vs[1].screenpos.second);
+
+		/*
 		vertexOut c = {
 			.screenpos = longline.atY(vs[1].screenpos.second),
+			.position  = mix(ms[0])
 			.uv        = mix(vs[0].uv, vs[2].uv, amt),
 			.depth     = mix(vs[0].depth, vs[2].depth, amt),
 		};
+		*/
 
 		geomOutTri b = {vs[2], c, vs[1]};
 
@@ -484,8 +507,9 @@ void drawBufferTriangles(vertex_buffer& vertbuf,
 		vec4 temp = (vec4){vert[0], vert[1], vert[2], 1.f};
 		temp = mult(uniforms.p,
 		            mult(uniforms.v,
+		            mult(uniforms.m,
 		            mult(uniforms.rotx,
-		            mult(uniforms.roty, temp))));
+		            mult(uniforms.roty, temp)))));
 
 		vec4 adj = ((temp/temp[3])*0.5f + 0.5f);
 
@@ -495,6 +519,7 @@ void drawBufferTriangles(vertex_buffer& vertbuf,
 		//printf("screenpos: (%d, %d)\n", x, y);
 		vertout.push_back((vertexOut) {
 			.screenpos = Coord {x, y},
+			.position  = (vec3) {temp[0], temp[1], temp[2]},
 			.uv        = uv,
 			.depth     = adj[2]
 		});
@@ -547,8 +572,9 @@ int main(void) {
 	}
 
 	SDL_Init(SDL_INIT_VIDEO);
-	sdl2_backend back(1280, 720);
-	//sdl2_backend back(960, 540);
+	//sdl2_backend back(1280, 720);
+	sdl2_backend back(960, 540);
+	//sdl2_backend back(640, 360);
 	auto fb = back.getFramebuffer();
 	framebuffer<float> depthfb(fb->width, fb->height, fb->pitch);
 	fbPair buffers = {fb, &depthfb};
@@ -601,6 +627,9 @@ int main(void) {
 	uniforms.roty = identity_mat4();
 	uniforms.zoom = 64;
 	uniforms.xoff = 0.f;
+	uniforms.cameraPos = (vec3) {0, 0, 0};
+
+	mat4 cameraRot = identity_mat4();
 
 	for (size_t i = 0;; i++) {
 		auto start = std::chrono::high_resolution_clock::now();
@@ -608,6 +637,18 @@ int main(void) {
 		while (SDL_PollEvent(&ev)) {
 			if (ev.type == SDL_QUIT)
 				return 0;
+
+			if (ev.type == SDL_KEYDOWN) {
+				switch (ev.key.keysym.sym) {
+					case SDLK_w: uniforms.cameraPos[2] += 1.0; break;
+					case SDLK_a: uniforms.cameraPos[0] += 1.0;  break;
+					case SDLK_s: uniforms.cameraPos[2] -= 1.0; break;
+					case SDLK_d: uniforms.cameraPos[0] -= 1.0; break;
+					case SDLK_q: uniforms.cameraPos[1] += 1.0; break;
+					case SDLK_e: uniforms.cameraPos[1] -= 1.0; break;
+					default: break;
+				}
+			}
 		}
 
 		int mx, my;
@@ -620,18 +661,45 @@ int main(void) {
 		}
 
 		if (mouse & SDL_BUTTON(SDL_BUTTON_RIGHT)) {
-			uniforms.zoom = 32 + 48*(float(my)/fb->height - 0.5);
+			uniforms.zoom = 32 + 64*(float(my)/fb->height - 0.5);
 			uniforms.xoff = 32*(float(mx)/fb->width - 0.5);
+		}
+
+		if (mouse & SDL_BUTTON(SDL_BUTTON_MIDDLE)) {
+			//uniforms.v = mult()
+			mat4 rx = rotateY(-2*M_PI * float(mx) / fb->width);
+			mat4 ry = rotateX(-2*M_PI * float(my) / fb->height);
+
+			//cameraRot = rx;
+			cameraRot = mult(rx, ry);
 		}
 
 		fb->clear();
 		depthfb.clear(HUGE_VALF);
 
-		uniforms.v = translate((vec3) {uniforms.xoff, 0, uniforms.zoom});
+		//uniforms.v = mult(identity_mat4(), translate(-uniforms.cameraPos));
+		//uniforms.v = mult(translate(-uniforms.cameraPos), identity_mat4());
+		//uniforms.v = mult(translate(-uniforms.cameraPos), cameraRot);
+		//uniforms.v = mult(cameraRot, translate(-uniforms.cameraPos));
+		//uniforms.v = mult(translate(-uniforms.cameraPos), identity_mat4());
+		uniforms.v = mult(translate(-uniforms.cameraPos), cameraRot);
+		//uniforms.v = translate(-uniforms.cameraPos);
+
+		uniforms.m = translate((vec3) {uniforms.xoff, 0, uniforms.zoom});
 		drawBufferTriangles(vertbuf, buffers, uniforms);
 
-		uniforms.v = translate((vec3) {uniforms.xoff+3, -2, uniforms.zoom});
-		drawBufferTriangles(vertbuf, buffers, uniforms);
+		for (int kz = 0; kz < 64; kz += 16) {
+			for (int kx = -8; kx < 8; kx += 4) {
+				for (int ky = -8; ky < 8; ky += 4) {
+					uniforms.m = translate((vec3) {
+						uniforms.xoff+kx,
+						float(ky),
+						uniforms.zoom + kz
+					});
+					drawBufferTriangles(vertbuf, buffers, uniforms);
+				}
+			}
+		}
 
 		/*
 		for (size_t y = i&0xff; y < fb->height; y++) {
