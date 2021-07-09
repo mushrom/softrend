@@ -1,4 +1,6 @@
 #include <softrend/backend/sdl.hpp>
+#include <softrend/render.hpp>
+#include <softrend/jobQueue.hpp>
 #include <chrono>
 #include <vector>
 #include <array>
@@ -200,6 +202,45 @@ struct vertexOut {
 	float depth;
 };
 
+struct shadingUniforms {
+	mat4 p;
+	mat4 v;
+	mat4 m;
+	mat4 rotx;
+	mat4 roty;
+	vec3 cameraPos;
+	float zoom;
+	float xoff;
+};
+
+struct screenRect {
+	int xbegin;
+	int ybegin;
+	int xend;
+	int yend;
+};
+
+struct renderContext {
+	renderContext(framebuffer<uint32_t> *c, framebuffer<float> *d)
+		: buffers(c, d) {};
+
+	using vertexAttr = vertexOut;
+	shadingUniforms uniforms;
+	jobQueue jobs;
+	fbPair<uint32_t, float> buffers;
+};
+
+template<typename T>
+concept Renderable = requires(T a) {
+	// vertex attribute format requires a mix function
+	// (also requires a T::vertexAttr())
+	mix(typename T::vertexAttr(), typename T::vertexAttr(), 0.5f);
+
+	// need a depth and color buffer
+	a.buffers.color;
+	a.buffers.depth;
+};
+
 static inline
 struct vertexOut mix(const vertexOut& a, const vertexOut& b, float amt) {
 	return (vertexOut) {
@@ -297,42 +338,35 @@ uint32_t getTexel(vec2 uv) {
 	return idx[2] | (idx[1] << 8) | (idx[0] << 16);
 }
 
-struct shadingUniforms {
-	mat4 p;
-	mat4 v;
-	mat4 m;
-	mat4 rotx;
-	mat4 roty;
-	vec3 cameraPos;
-	float zoom;
-	float xoff;
-};
-
-template <typename T, typename F>
-void drawLine(fbPair<T, F>& buffers, T color, int x1, int y1, int x2, int y2) {
+template <Renderable T>
+void drawLine(T& ctx, T color, int x1, int y1, int x2, int y2) {
 	float dx = x2 - x1;
 	float dy = y2 - y1;
 	float unit = (abs(dx) > abs(dy))? abs(dx) : abs(dy);
 	dx /= unit;
 	dy /= unit;
 
-	for (int i = 0; i <= unit && i < buffers.color->width; i++) {
+	for (int i = 0; i <= unit && i < ctx.buffers.color->width; i++) {
 		int x = x1 + i*dx;
 		int y = y1 + i*dy;
 
-		if (x < 0 || y < 0 || x >= buffers.color->width || y >= buffers.color->height)
+		if (x < 0 || y < 0
+		    || x >= ctx.buffers.color->width
+		    || y >= ctx.buffers.color->height)
 			continue;
 
-		buffers.color->setPixel(x, y, color);
+		ctx.buffers.color->setPixel(x, y, color);
 	}
 }
 
-template <typename T, typename F>
-void drawHorizontalLine(fbPair<T, F>& buffers, // TODO: texture parameter
+template <Renderable T>
+void drawHorizontalLine(T& ctx,
+                        const screenRect& bounds,
                         int x1, int x2, int y,
                         vertexOut& avert, vertexOut& bvert)
 {
-	if (y < 0 || y >= buffers.color->height) return;
+	if (y < 0 || y >= ctx.buffers.color->height) return;
+	if (y < bounds.ybegin || y >= bounds.yend)   return;
 
 	int start = (x1 < x2)? x1 : x2;
 	int end   = (x1 < x2)? x2 : x1;
@@ -343,16 +377,16 @@ void drawHorizontalLine(fbPair<T, F>& buffers, // TODO: texture parameter
 	vertexOut& startvert = (x1 < x2)? avert : bvert;
 	vertexOut& endvert   = (x1 < x2)? bvert : avert;
 
-	int bostart = clamp(start, 0, (int)buffers.color->width-1);
-	int boend   = clamp(end,   0, (int)buffers.color->width-1);
+	int bostart = clamp(start, bounds.xbegin, bounds.xend);
+	int boend   = clamp(end,   bounds.xbegin, bounds.xend);
 
-	for (int x = bostart; x != boend; x++) {
+	for (int x = bostart; x < boend; x++) {
 		float amount = float(x - start)/diff;
 
 		//vertexOut vertattr = mix(startvert, endvert, amount);
 		float depth = mix(startvert.depth, endvert.depth, amount);
 
-		if (depth < buffers.depth->getPixel(x, y)) {
+		if (depth < ctx.buffers.depth->getPixel(x, y)) {
 			vec2 uv = mix(startvert.uv, endvert.uv, amount);
 			//uint8_t yolo = 0x10*depth;
 			//ubvec4 meh = {0xff, yolo, yolo, yolo};
@@ -366,24 +400,26 @@ void drawHorizontalLine(fbPair<T, F>& buffers, // TODO: texture parameter
 				| (uint32_t(0xff*(fabs(vertattr.position[2]) / 100)) << 8)
 				;
 				*/
-			buffers.color->setPixel(x, y, c);
+			ctx.buffers.color->setPixel(x, y, c);
 			//uint32_t px = (c[1] << 0) | (c[2] << 8) | (c[3] << 16);
 			//buffers.color->setPixel(x, y, px);
-			buffers.depth->setPixel(x, y, depth);
+			ctx.buffers.depth->setPixel(x, y, depth);
 		}
 	}
 };
 
-template <typename T, typename F>
-void drawFlatTopTri(fbPair<T, F>& buffers, const geomOutTri& t) {
+template <Renderable T>
+void drawFlatTopTri(T& ctx, const screenRect& bounds, const geomOutTri& t) {
 	auto& vs = t.vertices;
 
 	// first is assumed to be bottom vert
 	line left(vs[0].screenpos, vs[1].screenpos);
 	line right(vs[0].screenpos, vs[2].screenpos);
 
-	int start = min((int)buffers.color->height-1, vs[0].screenpos.second);
-	int end   = max(0, vs[1].screenpos.second);
+	//int start = min((int)ctx.buffers.color->height-1, vs[0].screenpos.second);
+	//int end   = max(0, vs[1].screenpos.second);
+	int start = min(bounds.yend - 1, vs[0].screenpos.second);
+	int end   = max(bounds.ybegin,   vs[1].screenpos.second);
 
 	// loop towards the top, decrementing
 	for (int y = start; y >= end; y--) {
@@ -395,20 +431,22 @@ void drawFlatTopTri(fbPair<T, F>& buffers, const geomOutTri& t) {
 		vertexOut luv = mix(vs[0], vs[1], left.unitFromY(y));
 		vertexOut ruv = mix(vs[0], vs[2], right.unitFromY(y));
 
-		drawHorizontalLine(buffers, l.first, r.first, y, luv, ruv);
+		drawHorizontalLine(ctx, bounds, l.first, r.first, y, luv, ruv);
 	}
 };
 
-template <typename T, typename F>
-void drawFlatBottomTri(fbPair<T, F>& buffers, const geomOutTri& t) {
+template <Renderable T>
+void drawFlatBottomTri(T& ctx, const screenRect& bounds, const geomOutTri& t) {
 	auto& vs = t.vertices;
 
 	// first is assumed to be top vert
 	line left(vs[0].screenpos, vs[1].screenpos);
 	line right(vs[0].screenpos, vs[2].screenpos);
 
-	int start = max(0, vs[0].screenpos.second);
-	int end   = min((int)buffers.color->height-1, vs[1].screenpos.second);
+	//int start = max(0, vs[0].screenpos.second);
+	//int end   = min((int)ctx.buffers.color->height-1, vs[1].screenpos.second);
+	int start = max(bounds.ybegin,   vs[0].screenpos.second);
+	int end   = min(bounds.yend - 1, vs[1].screenpos.second);
 
 	// loop towards the bottom, incrementing
 	for (int y = start; y <= end; y++) {
@@ -420,12 +458,12 @@ void drawFlatBottomTri(fbPair<T, F>& buffers, const geomOutTri& t) {
 		vertexOut luv = mix(vs[0], vs[1], left.unitFromY(y));
 		vertexOut ruv = mix(vs[0], vs[2], right.unitFromY(y));
 
-		drawHorizontalLine(buffers, l.first, r.first, y, luv, ruv);
+		drawHorizontalLine(ctx, bounds, l.first, r.first, y, luv, ruv);
 	}
 };
 
-template <typename T, typename F>
-void drawTriangle(fbPair<T, F>& buffers, const geomOutTri& t) {
+template <Renderable T>
+void drawTriangle(T& ctx, const screenRect& bounds, const geomOutTri& t) {
 	geomOutTri temp = t;
 	auto& vs = temp.vertices;
 
@@ -442,10 +480,10 @@ void drawTriangle(fbPair<T, F>& buffers, const geomOutTri& t) {
 	if (vs[0].screenpos.second == vs[1].screenpos.second) {
 		//Tri foo = {temp[2], temp[0], temp[1]};
 		geomOutTri foo = {vs[2], vs[0], vs[1]};
-		drawFlatTopTri(buffers, foo);
+		drawFlatTopTri(ctx, bounds, foo);
 
 	} else if (vs[1].screenpos.second == vs[2].screenpos.second) {
-		drawFlatBottomTri(buffers, temp);
+		drawFlatBottomTri(ctx, bounds, temp);
 
 	} else {
 		line longline(vs[0].screenpos, vs[2].screenpos);
@@ -467,34 +505,34 @@ void drawTriangle(fbPair<T, F>& buffers, const geomOutTri& t) {
 
 		// can use temp for top tri, drawFlatBottomTri will stop at vs[1],
 		// which is the second smallest (and so the intersection point)
-		drawFlatBottomTri(buffers, temp);
-		drawFlatTopTri(buffers, b);
+		drawFlatBottomTri(ctx, bounds, temp);
+		drawFlatTopTri(ctx, bounds, b);
 	}
 };
 
-template <typename T, typename F>
-void drawTriangleLines(fbPair<T, F>& buffers, T color, const geomOutTri& t) {
+template <Renderable T>
+void drawTriangleLines(T& ctx, T color, const geomOutTri& t) {
 	auto& vs = t.vertices;
 
 	for (int k = 0; k < 3; k++) {
 		int j = k;
 		int m = (k+1)%3;
 
-		drawLine(buffers, color, vs[j].screenpos.first, vs[j].screenpos.second,
-		                         vs[m].screenpos.first, vs[m].screenpos.second);
+		drawLine(ctx, color, vs[j].screenpos.first, vs[j].screenpos.second,
+		                     vs[m].screenpos.first, vs[m].screenpos.second);
 	}
 }
 
-template <typename T, typename F>
-void drawBufferTriangles(vertex_buffer& vertbuf,
-                         fbPair<T, F>& buffers,
+template <Renderable T>
+void drawBufferTriangles(T& ctx,
+                         vertex_buffer& vertbuf,
                          shadingUniforms& uniforms)
 {
-	if (!buffers.color || !buffers.depth) {
+	if (!ctx.buffers.color || !ctx.buffers.depth) {
 		return;
 	}
 
-	std::vector<vertexOut> vertout;
+	std::vector<typename T::vertexAttr> vertout;
 	//auto fb = back.getFramebuffer();
 
 	//printf("zoom: %g\n", uniforms.zoom);
@@ -513,8 +551,8 @@ void drawBufferTriangles(vertex_buffer& vertbuf,
 
 		vec4 adj = ((temp/temp[3])*0.5f + 0.5f);
 
-		int x = adj[0]*buffers.color->width;
-		int y = adj[1]*buffers.color->height;
+		int x = adj[0]*ctx.buffers.color->width;
+		int y = adj[1]*ctx.buffers.color->height;
 
 		//printf("screenpos: (%d, %d)\n", x, y);
 		vertout.push_back((vertexOut) {
@@ -555,12 +593,35 @@ void drawBufferTriangles(vertex_buffer& vertbuf,
 			return aavg < bavg;
 		});
 
-	for (size_t i = 0; i < geometryTris.size(); i++) {
-		//printf("coord: (%d, %d)\n", geometryTris[i].vertices[0].screenpos.first, geometryTris[i].vertices[0].screenpos.second);
-		//printf("depth: %g\n", geometryTris[i].vertices[0].depth);
-		auto& geom = geometryTris[i];
-		drawTriangle(buffers, geom);
+
+	int yinc = 32;
+	int xinc = 32;
+	for (int y = 0; y < ctx.buffers.color->width; y += yinc) {
+		for (int x = 0; x < ctx.buffers.color->width; x += xinc) {
+			screenRect rect = {
+				x, y,
+				min(x+xinc, int(ctx.buffers.color->width)),
+				min(y+yinc, int(ctx.buffers.color->height)),
+			};
+
+#if 1
+			ctx.jobs.addAsync([&, rect] () {
+				for (size_t i = 0; i < geometryTris.size(); i++) {
+					drawTriangle(ctx, rect, geometryTris[i]);
+				}
+
+				return true;
+			});
+#else
+			for (size_t i = 0; i < geometryTris.size(); i++) {
+				drawTriangle(ctx, rect, geometryTris[i]);
+			}
+#endif
+		}
 	}
+
+	ctx.jobs.sync();
+	//usleep(10000);
 }
 
 int main(void) {
@@ -572,12 +633,22 @@ int main(void) {
 	}
 
 	SDL_Init(SDL_INIT_VIDEO);
-	//sdl2_backend back(1280, 720);
-	sdl2_backend back(960, 540);
+	sdl2_backend back(1280, 720);
+	//sdl2_backend back(960, 540);
+	/*
+	jobQueue jobs(std::thread::hardware_concurrency());
+
+	jobs.addAsync([] () {
+		puts("Got here!");
+		return true;
+	});
+	*/
+
 	//sdl2_backend back(640, 360);
 	auto fb = back.getFramebuffer();
 	framebuffer<float> depthfb(fb->width, fb->height, fb->pitch);
-	fbPair buffers = {fb, &depthfb};
+	//fbPair buffers = {fb, &depthfb};
+	renderContext ctx(fb, &depthfb);
 
 	vertex_buffer vertbuf;
 	for (auto& em : cube_vertices) { vertbuf.vertices.push_back(em); }
@@ -686,8 +757,9 @@ int main(void) {
 		//uniforms.v = translate(-uniforms.cameraPos);
 
 		uniforms.m = translate((vec3) {uniforms.xoff, 0, uniforms.zoom});
-		drawBufferTriangles(vertbuf, buffers, uniforms);
+		drawBufferTriangles(ctx, vertbuf, uniforms);
 
+#if 0
 		for (int kz = 0; kz < 64; kz += 16) {
 			for (int kx = -8; kx < 8; kx += 4) {
 				for (int ky = -8; ky < 8; ky += 4) {
@@ -696,10 +768,11 @@ int main(void) {
 						float(ky),
 						uniforms.zoom + kz
 					});
-					drawBufferTriangles(vertbuf, buffers, uniforms);
+					drawBufferTriangles(ctx, vertbuf, uniforms);
 				}
 			}
 		}
+#endif
 
 		/*
 		for (size_t y = i&0xff; y < fb->height; y++) {
@@ -722,6 +795,18 @@ int main(void) {
 			frametimes += times[(timeidx + i) % 8];
 		}
 		frametimes /= 8.f;
+
+		/*
+		static int lol[1000];
+		for (int n = 0; n < 1000; n++) {
+			jobs.addAsync([=] () {
+				lol[n] = n;
+				//printf("yoooo we %d\n", n);
+				return true;
+			});
+		}
+		jobs.sync();
+		*/
 
 		static unsigned counter = 1;
 		if (counter++ % 11 == 0) {
