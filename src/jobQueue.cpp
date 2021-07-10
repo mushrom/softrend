@@ -7,7 +7,8 @@ jobQueue::jobQueue(unsigned concurrency) {
 	// TOOO: some way to do background tasks on webgl, it's JS after all
 
 #else
-	for (unsigned i = 0; i < concurrency; i++) {
+	//for (unsigned i = 0; i < concurrency; i++) {
+	for (unsigned i = 0; i < 3; i++) {
 		workers.push_back(std::thread(&jobQueue::worker, this));
 	}
 #endif

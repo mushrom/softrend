@@ -593,11 +593,59 @@ void drawBufferTriangles(T& ctx,
 			return aavg < bavg;
 		});
 
+	static const int yinc = 64;
+	static const int xinc = 64;
 
-	int yinc = 32;
-	int xinc = 32;
+	int xdiv = ctx.buffers.color->width  / xinc + !!(ctx.buffers.color->width % xinc);
+	int ydiv = ctx.buffers.color->height / yinc + !!(ctx.buffers.color->height % yinc);
+
+	// covers 2048*2048
+	// TODO: buffer in render context
+	std::vector<int> bins[64][64];
+
+	for (int i = 0; i < geometryTris.size(); i++) {
+		auto& tri = geometryTris[i];
+
+		int xmin = xdiv-1;
+		int ymin = ydiv-1;
+		int xmax = 0;
+		int ymax = 0;
+
+		// bin by bounding box, a rectangle laid over the whole triangle
+		// could bin by doing a rough rasterization of the triangle,
+		// but this is simpler to implement for now
+		// so TODO: bin by rough rasterization
+		for (int k = 0; k < 3; k++) {
+			Coord s = tri.vertices[k].screenpos;
+			s.first /= xinc, s.second /= yinc;
+
+			xmin = min(xmin, s.first);
+			xmax = max(xmax, s.first);
+			ymin = min(ymin, s.second);
+			ymax = max(ymax, s.second);
+
+			xmin = max(xmin, 0);
+			xmax = min(xmax, xdiv-1);
+			ymin = max(ymin, 0);
+			ymax = min(ymax, ydiv-1);
+		}
+
+		for (int x = xmin; x <= xmax; x++) {
+			for (int y = ymin; y <= ymax; y++) {
+				bins[x][y].push_back(i);
+			}
+		}
+	}
+
 	for (int y = 0; y < ctx.buffers.color->width; y += yinc) {
 		for (int x = 0; x < ctx.buffers.color->width; x += xinc) {
+			int xpos = x/xinc;
+			int ypos = y/yinc;
+
+			if (bins[xpos][ypos].size() == 0) {
+				continue;
+			}
+
 			screenRect rect = {
 				x, y,
 				min(x+xinc, int(ctx.buffers.color->width)),
@@ -605,9 +653,11 @@ void drawBufferTriangles(T& ctx,
 			};
 
 #if 1
-			ctx.jobs.addAsync([&, rect] () {
-				for (size_t i = 0; i < geometryTris.size(); i++) {
-					drawTriangle(ctx, rect, geometryTris[i]);
+			ctx.jobs.addAsync([&, rect, xpos, ypos] () {
+				size_t n = bins[xpos][ypos].size();
+				for (size_t i = 0; i < n; i++) {
+					size_t idx = bins[xpos][ypos][i];
+					drawTriangle(ctx, rect, geometryTris[idx]);
 				}
 
 				return true;
@@ -759,7 +809,7 @@ int main(void) {
 		uniforms.m = translate((vec3) {uniforms.xoff, 0, uniforms.zoom});
 		drawBufferTriangles(ctx, vertbuf, uniforms);
 
-#if 0
+#if 1
 		for (int kz = 0; kz < 64; kz += 16) {
 			for (int kx = -8; kx < 8; kx += 4) {
 				for (int ky = -8; ky < 8; ky += 4) {
