@@ -1,4 +1,5 @@
-CFLAGS += -O3 -g -msse2 -mavx `sdl2-config --cflags --libs` -I./include -std=c++20
+CFLAGS += -O3 -mavx `sdl2-config --cflags --libs` -I./include -std=c++20
+#CFLAGS += -O1 -g -mavx `sdl2-config --cflags --libs` -I./include -std=c++20
 CXXFLAGS = $(CFLAGS)
 
 OBJ = src/main.o src/jobQueue.o

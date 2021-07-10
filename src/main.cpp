@@ -5,6 +5,7 @@
 #include <vector>
 #include <array>
 #include <algorithm> // sort
+#include <list>
 
 using namespace softrend;
 
@@ -202,6 +203,10 @@ struct vertexOut {
 	float depth;
 };
 
+struct geomOutTri {
+	std::array<vertexOut, 3> vertices;
+};
+
 struct shadingUniforms {
 	mat4 p;
 	mat4 v;
@@ -228,7 +233,59 @@ struct renderContext {
 	shadingUniforms uniforms;
 	jobQueue jobs;
 	fbPair<uint32_t, float> buffers;
+	// XXX
+	using Bins = std::vector<int>;
+	using Geobuf = std::vector<geomOutTri>;
+
+	std::mutex mtx;
+	std::list<Geobuf> geometryBuf;
+	std::list<Bins> bins;
+
+	Geobuf& allocGeobuf(void) {
+		std::unique_lock<std::mutex> slock(mtx);
+
+		geometryBuf.push_back({});
+		return geometryBuf.back();
+	}
+
+	Bins& allocBins(void) {
+		std::unique_lock<std::mutex> slock(mtx);
+
+		bins.push_back({});
+		return bins.back();
+	}
+
+	/*
+	Geobuf& allocGeobuf(void);
+	Bins& allocBins(void);
+	*/
+
+	void sync(void) {
+		jobs.sync();
+		{
+			std::unique_lock<std::mutex> slock(mtx);
+			geometryBuf.clear();
+			bins.clear();
+		}
+	}
 };
+
+/*
+renderContext::Geobuf& renderContext::allocGeobuf(void) {
+	std::unique_lock<std::mutex> slock(mtx);
+
+	geometryBuf.push_back({});
+	geometryBuf.back().reserve(32);
+	return geometryBuf.back();
+}
+
+renderContext::Bins& renderContext::allocBins(void) {
+	std::unique_lock<std::mutex> slock(mtx);
+
+	bins.push_back({});
+	return bins.back();
+}
+*/
 
 template<typename T>
 concept Renderable = requires(T a) {
@@ -252,14 +309,6 @@ struct vertexOut mix(const vertexOut& a, const vertexOut& b, float amt) {
 		.depth    = mix(a.depth, b.depth, amt)
 	};
 }
-
-struct geomOutTri {
-	/*
-	Tri triangle;
-	std::array<float, 3> depth;
-	*/
-	std::array<vertexOut, 3> vertices;
-};
 
 struct line {
 	Coord coord;
@@ -532,11 +581,14 @@ void drawBufferTriangles(T& ctx,
 		return;
 	}
 
-	std::vector<typename T::vertexAttr> vertout;
+	//std::vector<typename T::vertexAttr> vertout;
+	std::array<typename T::vertexAttr, 3> vertout;
+	auto& geometryTris = ctx.allocGeobuf();
 	//auto fb = back.getFramebuffer();
 
 	//printf("zoom: %g\n", uniforms.zoom);
 
+	size_t n = 0;
 	for (auto& em : vertbuf.elements) {
 		vec3& vert = vertbuf.vertices[em];
 		vec3& norm = vertbuf.normals[em];
@@ -555,12 +607,20 @@ void drawBufferTriangles(T& ctx,
 		int y = adj[1]*ctx.buffers.color->height;
 
 		//printf("screenpos: (%d, %d)\n", x, y);
-		vertout.push_back((vertexOut) {
+		vertout[n++] = {
 			.screenpos = Coord {x, y},
 			.position  = (vec3) {temp[0], temp[1], temp[2]},
 			.uv        = uv,
 			.depth     = adj[2]
-		});
+		};
+
+		if (n >= 3) {
+			geometryTris.push_back((geomOutTri) {
+				vertout[0], vertout[1], vertout[2]
+			});
+
+			n = 0;
+		}
 	}
 
 	/*
@@ -577,12 +637,23 @@ void drawBufferTriangles(T& ctx,
 	};
 	*/
 
-	std::vector<geomOutTri> geometryTris;
+	/*
+	ctx.geometryBuf.push_back({});
+	auto& geometryTris = ctx.geometryBuf.back();
+	*/
+
+	//std::vector<geomOutTri> geometryTris;
+	/*
 	for (size_t i = 0; i < vertout.size(); i += 3) {
 		geometryTris.push_back((geomOutTri) {
 			vertout[i], vertout[i+1], vertout[i+2]
 		});
 	}
+	*/
+
+	ctx.jobs.addAsync([&ctx, &geometryTris] () {
+	static const int yinc = 64;
+	static const int xinc = 64;
 
 	std::sort(geometryTris.begin(), geometryTris.end(),
 		[] (geomOutTri& a, geomOutTri& b) {
@@ -593,15 +664,22 @@ void drawBufferTriangles(T& ctx,
 			return aavg < bavg;
 		});
 
-	static const int yinc = 64;
-	static const int xinc = 64;
-
 	int xdiv = ctx.buffers.color->width  / xinc + !!(ctx.buffers.color->width % xinc);
 	int ydiv = ctx.buffers.color->height / yinc + !!(ctx.buffers.color->height % yinc);
 
 	// covers 2048*2048
 	// TODO: buffer in render context
-	std::vector<int> bins[64][64];
+	//std::vector<int> bins[64][64];
+	//auto bins = new std::vector<int>[64][64];
+	//ctx.bins.push_back({});
+	//auto& bins = ctx.bins.back();
+	// big XXX
+	auto& bins = ctx.allocBins();
+	size_t binsize = geometryTris.size() + 1;
+	size_t stride = xdiv*binsize;
+	bins.reserve(ydiv * stride);
+	bins.resize(bins.capacity());
+	for (size_t n = 0; n < bins.size(); n += stride) bins[n] = 0;
 
 	for (int i = 0; i < geometryTris.size(); i++) {
 		auto& tri = geometryTris[i];
@@ -632,17 +710,24 @@ void drawBufferTriangles(T& ctx,
 
 		for (int x = xmin; x <= xmax; x++) {
 			for (int y = ymin; y <= ymax; y++) {
-				bins[x][y].push_back(i);
+				//bins[x][y].reserve(geometryTris.size());
+				//bins[x][y].push_back(i);
+				int& c = bins[y*stride + x*binsize];
+				if (c < binsize) {
+					c++;
+					bins[y*stride + x*binsize + c] = i;
+				}
 			}
 		}
 	}
 
-	for (int y = 0; y < ctx.buffers.color->width; y += yinc) {
+	for (int y = 0; y < ctx.buffers.color->height; y += yinc) {
 		for (int x = 0; x < ctx.buffers.color->width; x += xinc) {
 			int xpos = x/xinc;
 			int ypos = y/yinc;
 
-			if (bins[xpos][ypos].size() == 0) {
+			size_t idx = ypos*stride + xpos*binsize;
+			if (bins[idx] == 0) {
 				continue;
 			}
 
@@ -653,11 +738,19 @@ void drawBufferTriangles(T& ctx,
 			};
 
 #if 1
-			ctx.jobs.addAsync([&, rect, xpos, ypos] () {
+			ctx.jobs.addAsync([&, rect, xpos, ypos, stride, binsize] () {
+					/*
 				size_t n = bins[xpos][ypos].size();
 				for (size_t i = 0; i < n; i++) {
 					size_t idx = bins[xpos][ypos][i];
 					drawTriangle(ctx, rect, geometryTris[idx]);
+				}
+				*/
+
+				size_t idx = ypos*stride + xpos*binsize;
+				int n = bins[idx];
+				for (int i = 0; i < n; i++) {
+					drawTriangle(ctx, rect, geometryTris[bins[idx+i+1]]);
 				}
 
 				return true;
@@ -670,7 +763,10 @@ void drawBufferTriangles(T& ctx,
 		}
 	}
 
-	ctx.jobs.sync();
+	return true;
+	});
+
+	//ctx.jobs.sync();
 	//usleep(10000);
 }
 
@@ -809,16 +905,22 @@ int main(void) {
 		uniforms.m = translate((vec3) {uniforms.xoff, 0, uniforms.zoom});
 		drawBufferTriangles(ctx, vertbuf, uniforms);
 
+		time_t foo = time(NULL);
 #if 1
+		uint64_t j = 0;
 		for (int kz = 0; kz < 64; kz += 16) {
 			for (int kx = -8; kx < 8; kx += 4) {
 				for (int ky = -8; ky < 8; ky += 4) {
-					uniforms.m = translate((vec3) {
-						uniforms.xoff+kx,
-						float(ky),
-						uniforms.zoom + kz
-					});
-					drawBufferTriangles(ctx, vertbuf, uniforms);
+					//if (foo&(1ULL << j)) {
+						uniforms.m = translate((vec3) {
+								uniforms.xoff+kx,
+								float(ky),
+								uniforms.zoom + kz
+								});
+						drawBufferTriangles(ctx, vertbuf, uniforms);
+					//}
+
+					j++;
 				}
 			}
 		}
@@ -834,6 +936,7 @@ int main(void) {
 		}
 		*/
 
+		ctx.sync();
 		auto end = std::chrono::high_resolution_clock::now();
 		back.swapFramebuffer();
 		std::chrono::duration<float> secs = end - start;
