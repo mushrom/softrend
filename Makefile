@@ -1,4 +1,4 @@
-CFLAGS += -O3 -mavx `sdl2-config --cflags --libs` -I./include -std=c++20
+CFLAGS += -O3 -mavx -march=native `sdl2-config --cflags --libs` -I./include -std=c++20
 #CFLAGS += -O1 -g -mavx `sdl2-config --cflags --libs` -I./include -std=c++20
 CXXFLAGS = $(CFLAGS)
 

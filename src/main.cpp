@@ -207,6 +207,14 @@ struct geomOutTri {
 	std::array<vertexOut, 3> vertices;
 };
 
+enum drawFlags {
+	DepthTest      = (1 << 0),
+	DepthMask      = (1 << 1),
+	CullFrontFaces = (1 << 2),
+	CullBackFaces  = (1 << 3),
+	SortGeometry   = (1 << 4),
+};
+
 struct shadingUniforms {
 	mat4 p;
 	mat4 v;
@@ -237,9 +245,16 @@ struct renderContext {
 	using Bins = std::vector<int>;
 	using Geobuf = std::vector<geomOutTri>;
 
+	// TODO: lockless
 	std::mutex mtx;
+	// std::list because references remain valid after inserting
+	// elements, std::vector references will be invalidated after the
+	// underlying storage is resized
+	// since this is just used for keeping track of resources it's no problem,
+	// the code works with the references directly
 	std::list<Geobuf> geometryBuf;
 	std::list<Bins> bins;
+	std::list<shadingUniforms> uniformBuffers;
 
 	Geobuf& allocGeobuf(void) {
 		std::unique_lock<std::mutex> slock(mtx);
@@ -255,6 +270,13 @@ struct renderContext {
 		return bins.back();
 	}
 
+	shadingUniforms& allocUniforms(void) {
+		std::unique_lock<std::mutex> slock(mtx);
+
+		uniformBuffers.push_back(shadingUniforms());
+		return uniformBuffers.back();
+	}
+
 	/*
 	Geobuf& allocGeobuf(void);
 	Bins& allocBins(void);
@@ -266,6 +288,7 @@ struct renderContext {
 			std::unique_lock<std::mutex> slock(mtx);
 			geometryBuf.clear();
 			bins.clear();
+			uniformBuffers.clear();
 		}
 	}
 };
@@ -575,18 +598,19 @@ void drawTriangleLines(T& ctx, T color, const geomOutTri& t) {
 template <Renderable T>
 void drawBufferTriangles(T& ctx,
                          vertex_buffer& vertbuf,
-                         shadingUniforms& uniforms)
+                         shadingUniforms& uniforms,
+                         int flags)
 {
 	if (!ctx.buffers.color || !ctx.buffers.depth) {
 		return;
 	}
 
+	shadingUniforms& unistate = ctx.allocUniforms();
+	unistate = uniforms;
+
 	//std::vector<typename T::vertexAttr> vertout;
 	std::array<typename T::vertexAttr, 3> vertout;
 	auto& geometryTris = ctx.allocGeobuf();
-	//auto fb = back.getFramebuffer();
-
-	//printf("zoom: %g\n", uniforms.zoom);
 
 	size_t n = 0;
 	for (auto& em : vertbuf.elements) {
@@ -595,11 +619,11 @@ void drawBufferTriangles(T& ctx,
 		vec2& uv   = vertbuf.uvs[em];
 
 		vec4 temp = (vec4){vert[0], vert[1], vert[2], 1.f};
-		temp = mult(uniforms.p,
-		            mult(uniforms.v,
-		            mult(uniforms.m,
-		            mult(uniforms.rotx,
-		            mult(uniforms.roty, temp)))));
+		temp = mult(unistate.p,
+		            mult(unistate.v,
+		            mult(unistate.m,
+		            mult(unistate.rotx,
+		            mult(unistate.roty, temp)))));
 
 		vec4 adj = ((temp/temp[3])*0.5f + 0.5f);
 
@@ -607,7 +631,7 @@ void drawBufferTriangles(T& ctx,
 		int y = adj[1]*ctx.buffers.color->height;
 
 		//printf("screenpos: (%d, %d)\n", x, y);
-		vertout[n++] = {
+		vertout[n++] = (typename T::vertexAttr) {
 			.screenpos = Coord {x, y},
 			.position  = (vec3) {temp[0], temp[1], temp[2]},
 			.uv        = uv,
@@ -651,119 +675,126 @@ void drawBufferTriangles(T& ctx,
 	}
 	*/
 
-	ctx.jobs.addAsync([&ctx, &geometryTris] () {
-	static const int yinc = 64;
-	static const int xinc = 64;
+	// TODO: split into functions
+	ctx.jobs.addAsync([&ctx, &geometryTris, &unistate, flags] ()
+	{
+		static const int yinc = 64;
+		static const int xinc = 64;
 
-	std::sort(geometryTris.begin(), geometryTris.end(),
-		[] (geomOutTri& a, geomOutTri& b) {
-			auto& av = a.vertices;
-			auto& bv = b.vertices;
-			float aavg = (av[0].depth + av[1].depth + av[2].depth) / 3.f;
-			float bavg = (bv[0].depth + bv[1].depth + bv[2].depth) / 3.f;
-			return aavg < bavg;
-		});
-
-	int xdiv = ctx.buffers.color->width  / xinc + !!(ctx.buffers.color->width % xinc);
-	int ydiv = ctx.buffers.color->height / yinc + !!(ctx.buffers.color->height % yinc);
-
-	// covers 2048*2048
-	// TODO: buffer in render context
-	//std::vector<int> bins[64][64];
-	//auto bins = new std::vector<int>[64][64];
-	//ctx.bins.push_back({});
-	//auto& bins = ctx.bins.back();
-	// big XXX
-	auto& bins = ctx.allocBins();
-	size_t binsize = geometryTris.size() + 1;
-	size_t stride = xdiv*binsize;
-	bins.reserve(ydiv * stride);
-	bins.resize(bins.capacity());
-	for (size_t n = 0; n < bins.size(); n += stride) bins[n] = 0;
-
-	for (int i = 0; i < geometryTris.size(); i++) {
-		auto& tri = geometryTris[i];
-
-		int xmin = xdiv-1;
-		int ymin = ydiv-1;
-		int xmax = 0;
-		int ymax = 0;
-
-		// bin by bounding box, a rectangle laid over the whole triangle
-		// could bin by doing a rough rasterization of the triangle,
-		// but this is simpler to implement for now
-		// so TODO: bin by rough rasterization
-		for (int k = 0; k < 3; k++) {
-			Coord s = tri.vertices[k].screenpos;
-			s.first /= xinc, s.second /= yinc;
-
-			xmin = min(xmin, s.first);
-			xmax = max(xmax, s.first);
-			ymin = min(ymin, s.second);
-			ymax = max(ymax, s.second);
-
-			xmin = max(xmin, 0);
-			xmax = min(xmax, xdiv-1);
-			ymin = max(ymin, 0);
-			ymax = min(ymax, ydiv-1);
+		if (flags & SortGeometry) {
+			std::sort(geometryTris.begin(), geometryTris.end(),
+				[] (geomOutTri& a, geomOutTri& b) {
+					auto& av = a.vertices;
+					auto& bv = b.vertices;
+					float aavg = (av[0].depth + av[1].depth + av[2].depth) / 3.f;
+					float bavg = (bv[0].depth + bv[1].depth + bv[2].depth) / 3.f;
+					return aavg < bavg;
+				});
 		}
 
-		for (int x = xmin; x <= xmax; x++) {
-			for (int y = ymin; y <= ymax; y++) {
-				//bins[x][y].reserve(geometryTris.size());
-				//bins[x][y].push_back(i);
-				int& c = bins[y*stride + x*binsize];
-				if (c < binsize) {
-					c++;
-					bins[y*stride + x*binsize + c] = i;
+		int xdiv = ctx.buffers.color->width  / xinc + !!(ctx.buffers.color->width % xinc);
+		int ydiv = ctx.buffers.color->height / yinc + !!(ctx.buffers.color->height % yinc);
+
+		// covers 2048*2048
+		// TODO: buffer in render context
+		//std::vector<int> bins[64][64];
+		//auto bins = new std::vector<int>[64][64];
+		//ctx.bins.push_back({});
+		//auto& bins = ctx.bins.back();
+		// big XXX
+		auto& bins = ctx.allocBins();
+		size_t binsize = geometryTris.size() + 1;
+		size_t stride = xdiv*binsize;
+		bins.reserve(ydiv * stride);
+		bins.resize(bins.capacity());
+		for (size_t n = 0; n < bins.size(); n += stride) bins[n] = 0;
+
+		for (int i = 0; i < geometryTris.size(); i++) {
+			auto& tri = geometryTris[i];
+
+			int xmin = xdiv-1;
+			int ymin = ydiv-1;
+			int xmax = 0;
+			int ymax = 0;
+
+			// bin by bounding box, a rectangle laid over the whole triangle
+			// could bin by doing a rough rasterization of the triangle,
+			// but this is simpler to implement for now
+			// so TODO: bin by rough rasterization
+			for (int k = 0; k < 3; k++) {
+				Coord s = tri.vertices[k].screenpos;
+				s.first /= xinc, s.second /= yinc;
+
+				xmin = min(xmin, s.first);
+				xmax = max(xmax, s.first);
+				ymin = min(ymin, s.second);
+				ymax = max(ymax, s.second);
+
+				xmin = max(xmin, 0);
+				xmax = min(xmax, xdiv-1);
+				ymin = max(ymin, 0);
+				ymax = min(ymax, ydiv-1);
+			}
+
+			for (int x = xmin; x <= xmax; x++) {
+				for (int y = ymin; y <= ymax; y++) {
+					//bins[x][y].reserve(geometryTris.size());
+					//bins[x][y].push_back(i);
+					int& c = bins[y*stride + x*binsize];
+					if (c < binsize) {
+						c++;
+						bins[y*stride + x*binsize + c] = i;
+					}
 				}
 			}
 		}
-	}
 
-	for (int y = 0; y < ctx.buffers.color->height; y += yinc) {
-		for (int x = 0; x < ctx.buffers.color->width; x += xinc) {
-			int xpos = x/xinc;
-			int ypos = y/yinc;
-
-			size_t idx = ypos*stride + xpos*binsize;
-			if (bins[idx] == 0) {
-				continue;
-			}
-
-			screenRect rect = {
-				x, y,
-				min(x+xinc, int(ctx.buffers.color->width)),
-				min(y+yinc, int(ctx.buffers.color->height)),
-			};
-
-#if 1
-			ctx.jobs.addAsync([&, rect, xpos, ypos, stride, binsize] () {
-					/*
-				size_t n = bins[xpos][ypos].size();
-				for (size_t i = 0; i < n; i++) {
-					size_t idx = bins[xpos][ypos][i];
-					drawTriangle(ctx, rect, geometryTris[idx]);
-				}
-				*/
+		for (int y = 0; y < ctx.buffers.color->height; y += yinc) {
+			for (int x = 0; x < ctx.buffers.color->width; x += xinc) {
+				int xpos = x/xinc;
+				int ypos = y/yinc;
 
 				size_t idx = ypos*stride + xpos*binsize;
-				int n = bins[idx];
-				for (int i = 0; i < n; i++) {
-					drawTriangle(ctx, rect, geometryTris[bins[idx+i+1]]);
+				if (bins[idx] == 0) {
+					continue;
 				}
 
-				return true;
-			});
-#else
-			for (size_t i = 0; i < geometryTris.size(); i++) {
-				drawTriangle(ctx, rect, geometryTris[i]);
-			}
-#endif
-		}
-	}
+				screenRect rect = {
+					x, y,
+					min(x+xinc, int(ctx.buffers.color->width)),
+					min(y+yinc, int(ctx.buffers.color->height)),
+				};
 
-	return true;
+#if 1
+				// TODO: function
+				ctx.jobs.addAsync([&bins, &geometryTris, &ctx, flags,
+								   rect, xpos, ypos, stride, binsize] ()
+				{
+						/*
+					size_t n = bins[xpos][ypos].size();
+					for (size_t i = 0; i < n; i++) {
+						size_t idx = bins[xpos][ypos][i];
+						drawTriangle(ctx, rect, geometryTris[idx]);
+					}
+					*/
+
+					size_t idx = ypos*stride + xpos*binsize;
+					int n = bins[idx];
+					for (int i = 0; i < n; i++) {
+						drawTriangle(ctx, rect, geometryTris[bins[idx+i+1]]);
+					}
+
+					return true;
+				});
+#else
+				for (size_t i = 0; i < geometryTris.size(); i++) {
+					drawTriangle(ctx, rect, geometryTris[i]);
+				}
+#endif
+			}
+		}
+
+		return true;
 	});
 
 	//ctx.jobs.sync();
@@ -894,6 +925,12 @@ int main(void) {
 		fb->clear();
 		depthfb.clear(HUGE_VALF);
 
+		int flags
+			= DepthTest
+			| DepthMask
+			| CullBackFaces
+			| SortGeometry;
+
 		//uniforms.v = mult(identity_mat4(), translate(-uniforms.cameraPos));
 		//uniforms.v = mult(translate(-uniforms.cameraPos), identity_mat4());
 		//uniforms.v = mult(translate(-uniforms.cameraPos), cameraRot);
@@ -903,7 +940,7 @@ int main(void) {
 		//uniforms.v = translate(-uniforms.cameraPos);
 
 		uniforms.m = translate((vec3) {uniforms.xoff, 0, uniforms.zoom});
-		drawBufferTriangles(ctx, vertbuf, uniforms);
+		drawBufferTriangles(ctx, vertbuf, uniforms, flags);
 
 		time_t foo = time(NULL);
 #if 1
@@ -917,7 +954,7 @@ int main(void) {
 								float(ky),
 								uniforms.zoom + kz
 								});
-						drawBufferTriangles(ctx, vertbuf, uniforms);
+						drawBufferTriangles(ctx, vertbuf, uniforms, flags);
 					//}
 
 					j++;
