@@ -233,14 +233,123 @@ struct screenRect {
 	int yend;
 };
 
+#include <softrend/brick.h>
+static inline
+uint32_t getTexel(vec2 uv) {
+	int width = _179_small_ppm_img.width;
+	int height = _179_small_ppm_img.height;
+
+	int x = int(uv[0] * width) % width;
+	int y = int(uv[1] * height) % height;
+
+	x = (x < 0)? width  + x : x;
+	y = (y < 0)? height + y : y;
+
+	uint8_t *idx = _179_small_ppm_img.pixels
+		+ 3*(y*width)
+		+ 3*x;
+
+	//return (ubvec4) {0xff, idx[2], idx[1], idx[0]};
+	return idx[2] | (idx[1] << 8) | (idx[0] << 16);
+}
+
+template <typename T, typename U, typename F>
+struct baseShader {
+	static inline
+	T vertexShader(const U& uniforms,
+	               const T& in,
+	               float width,
+	               float height)
+	{
+		const vec3& vert = in.position;
+		const vec3& norm = in.normal;
+		const vec2& uv   = in.uv;
+
+		vec4 temp = (vec4){vert[0], vert[1], vert[2], 1.f};
+		temp = mult(uniforms.p,
+					mult(uniforms.v,
+					mult(uniforms.m,
+					mult(uniforms.rotx,
+					mult(uniforms.roty, temp)))));
+
+		vec4 adj = ((temp/temp[3])*0.5f + 0.5f);
+
+		//int x = adj[0]*ctx.buffers.color->width;
+		//int y = adj[1]*ctx.buffers.color->height;
+		int x = adj[0]*width;
+		int y = adj[1]*height;
+
+		//printf("screenpos: (%d, %d)\n", x, y);
+		return (T) {
+			.screenpos = Coord {x, y},
+			.position  = (vec3) {temp[0], temp[1], temp[2]},
+			.uv        = uv,
+			.depth     = adj[2]
+		};
+	}
+
+	static inline
+	bool fragmentShader(const U& uniforms,
+	                    const T& in,
+	                    F& buffers,
+	                    int fragX,
+	                    int fragY)
+	{
+		uint32_t c = uint32_t(0xff*in.uv[0]) | (uint32_t(0xff*in.uv[1]) << 8);
+		buffers.color->setPixel(fragX, fragY, c);
+		return true;
+	}
+};
+
+template <typename T, typename U, typename F>
+struct textureShader : baseShader<T, U, F> {
+	static inline
+	bool fragmentShader(const U& uniforms,
+	                    const T& in,
+	                    F& buffers,
+	                    int fragX,
+	                    int fragY)
+	{
+		auto c = getTexel(in.uv);
+		buffers.color->setPixel(fragX, fragY, c);
+		return true;
+	}
+};
+
+/*
+template <template <typename T, typename U, typename F> typename S>
+concept Shader = requires(S<T, U, F> a) {
+	S<T, U, F>::vertexShader;
+	S<T, U, F>::fragmentShader;
+};
+*/
+
+template<typename T>
+concept Renderable = requires(T a) {
+	// vertex attribute format requires a mix function
+	// (also requires a T::vertexAttr())
+	mix(typename T::vertexAttr(), typename T::vertexAttr(), 0.5f);
+
+	// need a depth and color buffer
+	a.buffers.color;
+	a.buffers.depth;
+};
+
+// template speak for using a templated shader struct as defined above
+// so, this would just be instantiated as `renderContext<urShaderHere>`
+template <template <typename, typename, typename> typename S>
 struct renderContext {
-	renderContext(framebuffer<uint32_t> *c, framebuffer<float> *d)
-		: buffers(c, d) {};
+	renderContext(jobQueue& j, framebuffer<uint32_t> *c, framebuffer<float> *d)
+		: jobs(j), buffers(c, d) {};
 
 	using vertexAttr = vertexOut;
+	using Framebuffers = fbPair<uint32_t, float>;
+	//using vertexShader = perspectiveVertexShader<vertexAttr>;
+	using shaders = S<vertexAttr, shadingUniforms, Framebuffers>;
+
 	shadingUniforms uniforms;
-	jobQueue jobs;
-	fbPair<uint32_t, float> buffers;
+	jobQueue& jobs;
+	Framebuffers buffers;
 	// XXX
 	using Bins = std::vector<int>;
 	using Geobuf = std::vector<geomOutTri>;
@@ -309,17 +418,6 @@ renderContext::Bins& renderContext::allocBins(void) {
 	return bins.back();
 }
 */
-
-template<typename T>
-concept Renderable = requires(T a) {
-	// vertex attribute format requires a mix function
-	// (also requires a T::vertexAttr())
-	mix(typename T::vertexAttr(), typename T::vertexAttr(), 0.5f);
-
-	// need a depth and color buffer
-	a.buffers.color;
-	a.buffers.depth;
-};
 
 static inline
 struct vertexOut mix(const vertexOut& a, const vertexOut& b, float amt) {
@@ -390,26 +488,6 @@ struct line {
 	}
 };
 
-#include <softrend/brick.h>
-static inline
-uint32_t getTexel(vec2 uv) {
-	int width = _179_small_ppm_img.width;
-	int height = _179_small_ppm_img.height;
-
-	int x = int(uv[0] * width) % width;
-	int y = int(uv[1] * height) % height;
-
-	x = (x < 0)? width  + x : x;
-	y = (y < 0)? height + y : y;
-
-	uint8_t *idx = _179_small_ppm_img.pixels
-		+ 3*(y*width)
-		+ 3*x;
-
-	//return (ubvec4) {0xff, idx[2], idx[1], idx[0]};
-	return idx[2] | (idx[1] << 8) | (idx[0] << 16);
-}
-
 template <Renderable T>
 void drawLine(T& ctx, T color, int x1, int y1, int x2, int y2) {
 	float dx = x2 - x1;
@@ -452,6 +530,7 @@ void drawHorizontalLine(T& ctx,
 	int bostart = clamp(start, bounds.xbegin, bounds.xend);
 	int boend   = clamp(end,   bounds.xbegin, bounds.xend);
 
+	static shadingUniforms uniforms; //XXX
 	for (int x = bostart; x < boend; x++) {
 		float amount = float(x - start)/diff;
 
@@ -459,23 +538,14 @@ void drawHorizontalLine(T& ctx,
 		float depth = mix(startvert.depth, endvert.depth, amount);
 
 		if (depth < ctx.buffers.depth->getPixel(x, y)) {
-			vec2 uv = mix(startvert.uv, endvert.uv, amount);
-			//uint8_t yolo = 0x10*depth;
-			//ubvec4 meh = {0xff, yolo, yolo, yolo};
-			//buffers.color->setPixel(x, y, meh);
-			auto c = getTexel(uv);
-			//uint32_t c = uint32_t(0xff*uv[0]) | (uint32_t(0xff*uv[1]) << 8);
-			/*
-			uint32_t c =
-				uint32_t(0xff*(fabs(vertattr.position[0]) / 100))
-				| (uint32_t(0xff*(fabs(vertattr.position[1]) / 100)) << 8)
-				| (uint32_t(0xff*(fabs(vertattr.position[2]) / 100)) << 8)
-				;
-				*/
-			ctx.buffers.color->setPixel(x, y, c);
-			//uint32_t px = (c[1] << 0) | (c[2] << 8) | (c[3] << 16);
-			//buffers.color->setPixel(x, y, px);
-			ctx.buffers.depth->setPixel(x, y, depth);
+			typename T::vertexAttr attr = mix(startvert, endvert, amount);
+
+			bool shaded =
+				T::shaders::fragmentShader(uniforms, attr, ctx.buffers, x, y);
+
+			if (shaded) {
+				ctx.buffers.depth->setPixel(x, y, depth);
+			}
 		}
 	}
 };
@@ -614,6 +684,7 @@ void drawBufferTriangles(T& ctx,
 
 	size_t n = 0;
 	for (auto& em : vertbuf.elements) {
+		/*
 		vec3& vert = vertbuf.vertices[em];
 		vec3& norm = vertbuf.normals[em];
 		vec2& uv   = vertbuf.uvs[em];
@@ -637,6 +708,15 @@ void drawBufferTriangles(T& ctx,
 			.uv        = uv,
 			.depth     = adj[2]
 		};
+		*/
+
+		vertout[n++] = T::shaders::vertexShader(unistate, (typename T::vertexAttr) {
+			.position = vertbuf.vertices[em],
+			.normal   = vertbuf.normals[em],
+			.uv       = vertbuf.uvs[em]
+		},
+		ctx.buffers.color->width,
+		ctx.buffers.color->height		);
 
 		if (n >= 3) {
 			geometryTris.push_back((geomOutTri) {
@@ -738,8 +818,6 @@ void drawBufferTriangles(T& ctx,
 
 			for (int x = xmin; x <= xmax; x++) {
 				for (int y = ymin; y <= ymax; y++) {
-					//bins[x][y].reserve(geometryTris.size());
-					//bins[x][y].push_back(i);
 					int& c = bins[y*stride + x*binsize];
 					if (c < binsize) {
 						c++;
@@ -765,19 +843,11 @@ void drawBufferTriangles(T& ctx,
 					min(y+yinc, int(ctx.buffers.color->height)),
 				};
 
-#if 1
+#if 0
 				// TODO: function
 				ctx.jobs.addAsync([&bins, &geometryTris, &ctx, flags,
 								   rect, xpos, ypos, stride, binsize] ()
 				{
-						/*
-					size_t n = bins[xpos][ypos].size();
-					for (size_t i = 0; i < n; i++) {
-						size_t idx = bins[xpos][ypos][i];
-						drawTriangle(ctx, rect, geometryTris[idx]);
-					}
-					*/
-
 					size_t idx = ypos*stride + xpos*binsize;
 					int n = bins[idx];
 					for (int i = 0; i < n; i++) {
@@ -811,9 +881,9 @@ int main(void) {
 
 	SDL_Init(SDL_INIT_VIDEO);
 	sdl2_backend back(1280, 720);
+	jobQueue jobs(std::thread::hardware_concurrency());
 	//sdl2_backend back(960, 540);
 	/*
-	jobQueue jobs(std::thread::hardware_concurrency());
 
 	jobs.addAsync([] () {
 		puts("Got here!");
@@ -825,7 +895,7 @@ int main(void) {
 	auto fb = back.getFramebuffer();
 	framebuffer<float> depthfb(fb->width, fb->height, fb->pitch);
 	//fbPair buffers = {fb, &depthfb};
-	renderContext ctx(fb, &depthfb);
+	renderContext<textureShader> ctx(jobs, fb, &depthfb);
 
 	vertex_buffer vertbuf;
 	for (auto& em : cube_vertices) { vertbuf.vertices.push_back(em); }
