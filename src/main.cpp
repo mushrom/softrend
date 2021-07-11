@@ -16,6 +16,18 @@
 
 using namespace softrend;
 
+struct asdfUniforms {
+	mat4 p;
+	mat4 v;
+	mat4 m;
+	mat4 rotx;
+	mat4 roty;
+	vec3 cameraPos;
+	float zoom;
+	float xoff;
+	uint32_t color;
+};
+
 static inline
 uint32_t getTexel(vec2 uv) {
 	int width = _179_small_ppm_img.width;
@@ -50,6 +62,20 @@ struct textureShader : baseShader<T, U, F> {
 	}
 };
 
+template <typename T, typename U, typename F>
+struct constantColorShader : baseShader<T, U, F> {
+	static inline
+	bool fragmentShader(const U& uniforms,
+	                    const T& in,
+	                    F& buffers,
+	                    int fragX,
+	                    int fragY)
+	{
+		buffers.color->setPixel(fragX, fragY, uniforms.color);
+		return true;
+	}
+};
+
 int main(void) {
 	__builtin_cpu_init();
 
@@ -67,7 +93,8 @@ int main(void) {
 
 	auto fb = back.getFramebuffer();
 	framebuffer<float> depthfb(fb->width, fb->height, fb->pitch);
-	renderContext<vertexOut, shadingUniforms, textureShader> ctx(jobs, fb, &depthfb);
+	renderContext<vertexOut, asdfUniforms, constantColorShader> ctx(jobs, fb, &depthfb);
+	renderContext<vertexOut, asdfUniforms, textureShader> texctx(jobs, fb, &depthfb);
 
 	vertex_buffer vertbuf;
 	for (auto& em : cube_vertices) { vertbuf.vertices.push_back(em); }
@@ -79,13 +106,14 @@ int main(void) {
 	float times[8];
 	unsigned timeidx;
 
-	shadingUniforms uniforms;
+	asdfUniforms uniforms;
 	uniforms.p = perspective(M_PI/2.f, 16.f/9.f, 0.1f, 100.f);
 	uniforms.rotx = identity_mat4();
 	uniforms.roty = identity_mat4();
 	uniforms.zoom = 64;
 	uniforms.xoff = 0.f;
 	uniforms.cameraPos = (vec3) {0, 0, 0};
+	uniforms.color = 0x8080b0;
 
 	mat4 cameraRot = identity_mat4();
 	int flags
@@ -143,31 +171,54 @@ int main(void) {
 		uniforms.v = mult(translate(-uniforms.cameraPos), cameraRot);
 		//uniforms.v = translate(-uniforms.cameraPos);
 
+		uniforms.color = 0x8080b0;
 		uniforms.m = translate((vec3) {uniforms.xoff, 0, uniforms.zoom});
 		drawBufferTriangles(ctx, vertbuf, uniforms, flags);
 
 #if 1
 		time_t foo = time(NULL);
 		uint64_t j = 0;
-		for (int kz = 0; kz < 64; kz += 16) {
+		for (int kz = 8; kz < 72; kz += 16) {
 			for (int kx = -8; kx < 8; kx += 4) {
 				for (int ky = -8; ky < 8; ky += 4) {
+					uniforms.color
+						= (((kz-8)/16) << 20)
+						| (((kx+8)/4)  << 12)
+						| (((ky+8)/4)  << 4)
+						;
+
+					uniforms.color += 0x020202;
+					uniforms.m = translate((vec3) {
+						uniforms.xoff + kx,
+						float(ky),
+						uniforms.zoom + kz
+					});
+
+					if (kx < 0) {
+						drawBufferTriangles(texctx, vertbuf, uniforms, flags);
+					} else {
+						drawBufferTriangles(ctx, vertbuf, uniforms, flags);
+					}
+
+#if 0
 					//if (foo&(1ULL << j)) { // uncomment for binary clock lol
 						uniforms.m = translate((vec3) {
 							uniforms.xoff + kx,
 							float(ky),
 							uniforms.zoom + kz
 						});
-						drawBufferTriangles(ctx, vertbuf, uniforms, flags);
+						drawBufferTriangles(nctx, vertbuf, uniforms, flags);
 					//}
 
 					j++;
+#endif
 				}
 			}
 		}
 #endif
 
 		ctx.sync();
+		texctx.sync();
 		auto end = std::chrono::high_resolution_clock::now();
 		back.swapFramebuffer();
 		std::chrono::duration<float> secs = end - start;

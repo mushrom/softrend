@@ -363,73 +363,77 @@ void processGeometry(T& ctx,
 template <Renderable T>
 void drawBufferTriangles(T& ctx,
                          vertex_buffer& vertbuf,
-                         shadingUniforms& uniforms,
+                         typename T::uniformType& uniforms,
                          int flags)
 {
 	if (!ctx.buffers.color || !ctx.buffers.depth) {
 		return;
 	}
 
-	shadingUniforms& unistate = ctx.allocUniforms();
+	typename T::uniformType& unistate = ctx.allocUniforms();
 	unistate = uniforms;
 
-	//std::vector<typename T::vertexAttr> vertout;
-	std::array<typename T::vertexAttr, 3> vertout;
-	auto& geometryTris = ctx.allocGeobuf();
+	ctx.jobs.addAsync([&ctx, &vertbuf, &unistate, flags] () {
+		//std::vector<typename T::vertexAttr> vertout;
+		std::array<typename T::vertexAttr, 3> vertout;
+		auto& geometryTris = ctx.allocGeobuf();
 
-	size_t n = 0;
-	for (auto& em : vertbuf.elements) {
-		vertout[n++] = T::shaders::vertexShader(unistate,
-			(typename T::vertexAttr) {
-				.position = vertbuf.vertices[em],
-				.normal   = vertbuf.normals[em],
-				.uv       = vertbuf.uvs[em]
-			},
-			ctx.buffers.color->width,
-			ctx.buffers.color->height
-		);
+		size_t n = 0;
+		for (auto& em : vertbuf.elements) {
+			vertout[n++] = T::shaders::vertexShader(unistate,
+				(typename T::vertexAttr) {
+					.position = vertbuf.vertices[em],
+					.normal   = vertbuf.normals[em],
+					.uv       = vertbuf.uvs[em]
+				},
+				ctx.buffers.color->width,
+				ctx.buffers.color->height
+			);
 
-		if (n >= 3) {
-			geometryTris.push_back((typename T::geomOutTri) {
-				vertout[0], vertout[1], vertout[2]
-			});
+			if (n >= 3) {
+				geometryTris.push_back((typename T::geomOutTri) {
+					vertout[0], vertout[1], vertout[2]
+				});
 
-			n = 0;
+				n = 0;
+			}
 		}
-	}
 
-	/*
-	ubvec4 color = (ubvec4){0xff, 0xff, 0xff, 0xff};
-	int id = 0;
+		/*
+		ubvec4 color = (ubvec4){0xff, 0xff, 0xff, 0xff};
+		int id = 0;
 
-	auto newcolor = [&]() {
-		uint8_t r = 0x80 + 0x1f*(id & 3);
-		uint8_t g = 0x80 + 0x1f*((id >> 2) & 3);
-		uint8_t b = 0x80 + 0x1f*((id >> 4) & 3);
+		auto newcolor = [&]() {
+			uint8_t r = 0x80 + 0x1f*(id & 3);
+			uint8_t g = 0x80 + 0x1f*((id >> 2) & 3);
+			uint8_t b = 0x80 + 0x1f*((id >> 4) & 3);
 
-		color = (ubvec4){0xff, b, g, r};
-		id++;
-	};
-	*/
+			color = (ubvec4){0xff, b, g, r};
+			id++;
+		};
+		*/
 
-	/*
-	ctx.geometryBuf.push_back({});
-	auto& geometryTris = ctx.geometryBuf.back();
-	*/
+		/*
+		ctx.geometryBuf.push_back({});
+		auto& geometryTris = ctx.geometryBuf.back();
+		*/
 
-	//std::vector<geomOutTri> geometryTris;
-	/*
-	for (size_t i = 0; i < vertout.size(); i += 3) {
-		geometryTris.push_back((geomOutTri) {
-			vertout[i], vertout[i+1], vertout[i+2]
+		//std::vector<geomOutTri> geometryTris;
+		/*
+		for (size_t i = 0; i < vertout.size(); i += 3) {
+			geometryTris.push_back((geomOutTri) {
+				vertout[i], vertout[i+1], vertout[i+2]
+			});
+		}
+		*/
+
+		// TODO: split into functions
+		ctx.jobs.addAsync([&ctx, &geometryTris, &unistate, flags] ()
+		{
+			processGeometry(ctx, geometryTris, unistate, flags);
+			return true;
 		});
-	}
-	*/
 
-	// TODO: split into functions
-	ctx.jobs.addAsync([&ctx, &geometryTris, &unistate, flags] ()
-	{
-		processGeometry(ctx, geometryTris, unistate, flags);
 		return true;
 	});
 
