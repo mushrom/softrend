@@ -1,7 +1,30 @@
 #pragma once
 #include <stdint.h>
+#include <array>
+
+// generic types for all render implementations, vertex attributes, uniforms,
+// render context etc. aren't included here because they're expected to be
+// customized
 
 namespace softrend {
+
+enum drawFlags {
+	DepthTest      = (1 << 0),
+	DepthMask      = (1 << 1),
+	CullFrontFaces = (1 << 2),
+	CullBackFaces  = (1 << 3),
+	SortGeometry   = (1 << 4),
+};
+
+struct screenRect {
+	int xbegin;
+	int ybegin;
+	int xend;
+	int yend;
+};
+
+using Coord = std::pair<int, int>;
+using Tri = std::array<Coord, 3>;
 
 // either uint8_t or float
 template <typename T>
@@ -40,6 +63,15 @@ class framebuffer {
 				data[i] = val;
 			}
 		}
+};
+
+template <typename T, typename F>
+struct fbPair {
+	fbPair(framebuffer<T> *c, framebuffer<F> *d)
+		: color(c), depth(d) {};
+
+	framebuffer<T> *color = nullptr;
+	framebuffer<F> *depth = nullptr;
 };
 
 // namespace softrend

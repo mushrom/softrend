@@ -8,7 +8,7 @@ jobQueue::jobQueue(unsigned concurrency) {
 
 #else
 	//for (unsigned i = 0; i < concurrency; i++) {
-	for (unsigned i = 0; i < 3; i++) {
+	for (unsigned i = 0; i < concurrency; i++) {
 		workers.push_back(std::thread(&jobQueue::worker, this));
 	}
 #endif
