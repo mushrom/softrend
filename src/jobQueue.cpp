@@ -109,8 +109,8 @@ void jobQueue::sync(void) {
 				return;
 		}
 
-		std::this_thread::yield();
-		//std::this_thread::sleep_for(std::chrono::microseconds(1000));
+		//std::this_thread::yield();
+		std::this_thread::sleep_for(std::chrono::microseconds(100));
 	}
 }
 
