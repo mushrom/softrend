@@ -45,7 +45,6 @@ struct vec {
 
 	void initAll(T value) {
 		for (size_t i = 0; i < N; i++) {
-			std::cout << "C: setting " << i << ": " << value << std::endl;
 			values[i] = value;
 		}
 	}
@@ -67,7 +66,6 @@ struct vec {
 				static_error();
 			}
 
-			std::cout << "A: setting " << n << ": " << arg << std::endl;
 			values[n] = arg;
 			//values[n] = n;
 
@@ -84,7 +82,6 @@ struct vec {
 			}
 
 			for (unsigned m = 0; m < K::Components; m++) {
-				std::cout << "B: setting " << n+m << ": " << arg.values[m] << std::endl;
 				values[n + m] = arg.values[m];
 			}
 
@@ -100,55 +97,216 @@ struct vec {
 	}
 
 	template <bool avail = 1 <= N>
-	constexpr T& x() {
+	T& x() {
 		static_assert(avail, "invalid swizzle (requires 1+ components)");
 		return values[0];
 	};
 
 	template <bool avail = 2 <= N>
-	constexpr T& y() {
+	T& y() {
 		static_assert(avail, "invalid swizzle (requires 2+ components)");
 		return values[1];
 	};
 
 	template <bool avail = 3 <= N>
-	constexpr T& z() {
+	T& z() {
 		static_assert(avail, "invalid swizzle (requires 3+ components)");
 		return values[2];
 	};
 
 	template <bool avail = 4 <= N>
-	constexpr T& w() {
+	T& w() {
 		static_assert(avail, "invalid swizzle (requires 4+ components)");
 		return values[3];
 	};
 
 	template <bool avail = 1 <= N>
-	constexpr T& r() {
+	T& r() {
 		static_assert(avail, "invalid swizzle (requires 1+ components)");
 		return values[0];
 	};
 
 	template <bool avail = 2 <= N>
-	constexpr T& g() {
+	T& g() {
 		static_assert(avail, "invalid swizzle (requires 2+ components)");
 		return values[1];
 	};
 
 	template <bool avail = 3 <= N>
-	constexpr T& b() {
+	T& b() {
 		static_assert(avail, "invalid swizzle (requires 3+ components)");
 		return values[2];
 	};
 
 	template <bool avail = 4 <= N>
-	constexpr T& a() {
+	T& a() {
 		static_assert(avail, "invalid swizzle (requires 4+ components)");
 		return values[3];
 	};
 
-	T operator+() const { return *this; }
-	T operator-() const {}
+	vec operator+() const { return vec(values); }
+
+	vec operator-() const {
+		vec ret;
+
+		for (size_t i = 0; i < N; i++) {
+			ret.values[i] = -this->values[i];
+		}
+
+		return ret;
+	}
+
+	vec operator+(const vec& other) {
+		vec ret;
+
+		for (size_t i = 0; i < N; i++) {
+			ret.values[i] = this->values[i] + other.values[i];
+		}
+
+		return ret;
+	}
+
+	vec operator-(const vec& other) {
+		vec ret;
+
+		for (size_t i = 0; i < N; i++) {
+			ret.values[i] = this->values[i] - other.values[i];
+		}
+
+		return ret;
+	}
+
+	vec operator*(const vec& other) {
+		vec ret;
+
+		for (size_t i = 0; i < N; i++) {
+			ret.values[i] = this->values[i] * other.values[i];
+		}
+
+		return ret;
+	}
+
+	vec operator/(const vec& other) {
+		vec ret;
+
+		for (size_t i = 0; i < N; i++) {
+			ret.values[i] = this->values[i] / other.values[i];
+		}
+
+		return ret;
+	}
+
+	vec& operator+=(const vec& other) {
+		for (size_t i = 0; i < N; i++) {
+			values[i] += other.values[i];
+		}
+
+		return *this;
+	}
+
+	vec& operator-=(const vec& other) {
+		for (size_t i = 0; i < N; i++) {
+			values[i] -= other.values[i];
+		}
+
+		return *this;
+	}
+
+	vec& operator*=(const vec& other) {
+		for (size_t i = 0; i < N; i++) {
+			values[i] *= other.values[i];
+		}
+
+		return *this;
+	}
+
+	vec& operator/=(const vec& other) {
+		for (size_t i = 0; i < N; i++) {
+			values[i] /= other.values[i];
+		}
+
+		return *this;
+	}
+
+	vec operator+(const T& value) {
+		vec ret;
+
+		for (size_t i = 0; i < N; i++) {
+			ret.values[i] = this->values[i] + value;
+		}
+
+		return ret;
+	}
+
+	vec operator-(const T& value) {
+		vec ret;
+
+		for (size_t i = 0; i < N; i++) {
+			ret.values[i] = this->values[i] - value;
+		}
+
+		return ret;
+	}
+
+	vec operator*(const T& value) {
+		vec ret;
+
+		for (size_t i = 0; i < N; i++) {
+			ret.values[i] = this->values[i] * value;
+		}
+
+		return ret;
+	}
+
+	vec operator/(const T& value) {
+		vec ret;
+
+		for (size_t i = 0; i < N; i++) {
+			ret.values[i] = this->values[i] / value;
+		}
+
+		return ret;
+	}
+
+	vec& operator+=(const T& value) {
+		for (size_t i = 0; i < N; i++) {
+			values[i] += value;
+		}
+
+		return *this;
+	}
+
+	vec& operator-=(const T& value) {
+		for (size_t i = 0; i < N; i++) {
+			values[i] -= value;
+		}
+
+		return *this;
+	}
+
+	vec& operator*=(const T& value) {
+		for (size_t i = 0; i < N; i++) {
+			values[i] *= value;
+		}
+
+		return *this;
+	}
+
+	vec& operator/=(const T& value) {
+		for (size_t i = 0; i < N; i++) {
+			values[i] /= value;
+		}
+
+		return *this;
+	}
+
+	T& operator[](size_t pos) {
+		return values[pos];
+	}
+
+	const T& operator[](size_t pos) const {
+		return values[pos];
+	}
 
 	constexpr operator std::string () {
 		std::string ret = "[";
@@ -165,6 +323,17 @@ struct vec {
 
     #include <softrend/math/swizzles.hpp>
 };
+
+template <typename T, size_t N>
+T dot(const vec<T, N>& a, const vec<T, N>& b) {
+	T sum = 0;
+
+	for (size_t i = 0; i < N; i++) {
+		sum += a.values[i] * b.values[i];
+	}
+
+	return sum;
+}
 
 // namespace softrend
 }
