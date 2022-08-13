@@ -325,6 +325,50 @@ struct vec {
 };
 
 template <typename T, size_t N>
+vec<T, N> operator+(const T& value, const vec<T, N>& v) {
+	vec<T, N> ret;
+
+	for (size_t i = 0; i < N; i++) {
+		ret.values[i] = v.values[i] + value;
+	}
+
+	return ret;
+}
+
+template <typename T, size_t N>
+vec<T, N> operator-(const T& value, const vec<T, N>& v) {
+	vec<T, N> ret;
+
+	for (size_t i = 0; i < N; i++) {
+		ret.values[i] = v.values[i] - value;
+	}
+
+	return ret;
+}
+
+template <typename T, size_t N>
+vec<T, N> operator*(const T& value, const vec<T, N>& v) {
+	vec<T, N> ret;
+
+	for (size_t i = 0; i < N; i++) {
+		ret.values[i] = v.values[i] * value;
+	}
+
+	return ret;
+}
+
+template <typename T, size_t N>
+vec<T, N> operator/(const T& value, const vec<T, N>& v) {
+	vec<T, N> ret;
+
+	for (size_t i = 0; i < N; i++) {
+		ret.values[i] = v.values[i] / value;
+	}
+
+	return ret;
+}
+
+template <typename T, size_t N>
 T dot(const vec<T, N>& a, const vec<T, N>& b) {
 	T sum = 0;
 
