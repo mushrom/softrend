@@ -1,5 +1,5 @@
 #pragma once
-#include <softrend/math.hpp>
+#include <softrend/math/math.hpp>
 #include <vector>
 
 namespace softrend {

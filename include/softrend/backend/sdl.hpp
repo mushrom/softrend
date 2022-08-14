@@ -2,7 +2,6 @@
 #include <SDL.h>
 #include <SDL_surface.h>
 #include <softrend/render.hpp>
-#include <softrend/math.hpp>
 #include <exception>
 #include <stdexcept>
 

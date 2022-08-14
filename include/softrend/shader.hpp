@@ -1,5 +1,5 @@
 #pragma once
-#include <softrend/math.hpp>
+#include <softrend/math/math.hpp>
 #include <softrend/brick.h>
 
 namespace softrend {
@@ -17,11 +17,12 @@ struct baseShader {
 		const vec2& uv   = in.uv;
 
 		vec4 temp = (vec4){vert[0], vert[1], vert[2], 1.f};
-		temp = mult(uniforms.p,
-					mult(uniforms.v,
-					mult(uniforms.m,
-					mult(uniforms.rotx,
-					mult(uniforms.roty, temp)))));
+		temp = uniforms.p
+		     * uniforms.v
+		     * uniforms.m
+		     * uniforms.rotx 
+		     * uniforms.roty 
+		     * temp;
 
 		vec4 adj = ((temp/temp[3])*0.5f + 0.5f);
 

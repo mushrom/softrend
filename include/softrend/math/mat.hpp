@@ -79,7 +79,7 @@ struct mat {
 		return ret;
 	}
 
-	mat operator+(const mat& other) {
+	mat operator+(const mat& other) const {
 		mat ret;
 
 		for (size_t c = 0; c < COL; c++) {
@@ -89,7 +89,7 @@ struct mat {
 		return ret;
 	}
 
-	mat operator/(const mat& other) {
+	mat operator/(const mat& other) const {
 		mat ret;
 
 		for (size_t c = 0; c < COL; c++) {
@@ -100,7 +100,7 @@ struct mat {
 	}
 
 	template <size_t R>
-	VecType operator*(const vec<T, R>& v) {
+	VecType operator*(const vec<T, R>& v) const {
 		static_assert(R == COL, "Incompatible matrices");
 		VecType ret;
 
@@ -112,7 +112,7 @@ struct mat {
 	}
 
 	template <size_t OCOL, size_t OROW>
-	mat<T, OCOL, ROW> operator*(const mat<T, OCOL, OROW>& other) {
+	mat<T, OCOL, ROW> operator*(const mat<T, OCOL, OROW>& other) const {
 		static_assert(OROW == COL, "Incompatible matrices");
 		mat<T, OCOL, ROW> ret;
 

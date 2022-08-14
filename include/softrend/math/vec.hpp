@@ -156,7 +156,7 @@ struct vec {
 		return ret;
 	}
 
-	vec operator+(const vec& other) {
+	vec operator+(const vec& other) const {
 		vec ret;
 
 		for (size_t i = 0; i < N; i++) {
@@ -166,7 +166,7 @@ struct vec {
 		return ret;
 	}
 
-	vec operator-(const vec& other) {
+	vec operator-(const vec& other) const {
 		vec ret;
 
 		for (size_t i = 0; i < N; i++) {
@@ -176,7 +176,7 @@ struct vec {
 		return ret;
 	}
 
-	vec operator*(const vec& other) {
+	vec operator*(const vec& other) const {
 		vec ret;
 
 		for (size_t i = 0; i < N; i++) {
@@ -186,7 +186,7 @@ struct vec {
 		return ret;
 	}
 
-	vec operator/(const vec& other) {
+	vec operator/(const vec& other) const {
 		vec ret;
 
 		for (size_t i = 0; i < N; i++) {

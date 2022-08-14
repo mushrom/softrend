@@ -7,6 +7,7 @@
 
 #include <softrend/renderContext.hpp>
 #include <softrend/renderImpl.hpp>
+//#include <softrend/assimp.hpp>
 
 #include <chrono>
 #include <vector>
@@ -76,8 +77,13 @@ struct constantColorShader : baseShader<T, U, F> {
 	}
 };
 
-int main(void) {
+int main(int argc, char *argv[]) {
 	__builtin_cpu_init();
+
+	if (argc > 1) {
+		//auto v = importScene(std::string(argv[1]));
+		//printf("Testing: %d\n", v.has_value());
+	}
 
 #if 0
 	// TODO: platform checks, hotpaths for different feature support...?
@@ -89,6 +95,7 @@ int main(void) {
 
 	SDL_Init(SDL_INIT_VIDEO);
 	sdl2_backend back(1280, 720);
+	//sdl2_backend back(854, 480);
 	jobQueue jobs(std::thread::hardware_concurrency());
 
 	auto fb = back.getFramebuffer();
@@ -108,14 +115,15 @@ int main(void) {
 
 	asdfUniforms uniforms;
 	uniforms.p = perspective(M_PI/2.f, 16.f/9.f, 0.1f, 100.f);
-	uniforms.rotx = identity_mat4();
-	uniforms.roty = identity_mat4();
+	//uniforms.rotx = identity_mat4();
+	//uniforms.roty = identity_mat4();
 	uniforms.zoom = 64;
 	uniforms.xoff = 0.f;
 	uniforms.cameraPos = (vec3) {0, 0, 0};
 	uniforms.color = 0x8080b0;
 
-	mat4 cameraRot = identity_mat4();
+	//mat4 cameraRot = identity_mat4();
+	mat4 cameraRot;
 	int flags
 		= DepthTest
 		| DepthMask
@@ -162,13 +170,15 @@ int main(void) {
 			mat4 ry = rotateX(-2*M_PI * float(my) / fb->height);
 
 			//cameraRot = rx;
-			cameraRot = mult(rx, ry);
+			//cameraRot = mult(rx, ry);
+			cameraRot = rx*ry;
 		}
 
 		fb->clear();
 		depthfb.clear(HUGE_VALF);
 
-		uniforms.v = mult(translate(-uniforms.cameraPos), cameraRot);
+		//uniforms.v = mult(translate(-uniforms.cameraPos), cameraRot);
+		uniforms.v = translate(-uniforms.cameraPos) * cameraRot;
 		//uniforms.v = translate(-uniforms.cameraPos);
 
 		uniforms.color = 0x8080b0;

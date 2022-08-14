@@ -1,7 +1,7 @@
 #pragma once
 
 #include <softrend/renderContext.hpp>
-#include <softrend/math.hpp>
+#include <softrend/math/math.hpp>
 
 #include <vector>
 #include <array>

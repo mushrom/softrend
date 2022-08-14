@@ -1,6 +1,6 @@
 #pragma once
 // TODO: should probably split vector typedefs from math functions
-#include <softrend/math.hpp>
+#include <softrend/math/math.hpp>
 
 namespace softrend {
 
