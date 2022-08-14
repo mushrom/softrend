@@ -9,7 +9,7 @@
 
 namespace softrend {
 
-template <typename T, size_t ROW, size_t COL>
+template <typename T, size_t COL, size_t ROW>
 struct mat {
 	static constexpr size_t Rows    = ROW;
 	static constexpr size_t Columns = COL;
@@ -17,7 +17,6 @@ struct mat {
 	using VecType = vec<T, ROW>;
 
 	// column-major
-	//VecType values[COL];
 	std::array<VecType, COL> values;
 
 	mat() {
@@ -55,12 +54,10 @@ struct mat {
 		static_assert(std::is_convertible<K, T>::value,
 				      "Initializer value cannot be converted to matrix value");
 
-		const K& value = args[0];
-
 		// initialize to a scaling matrix
 		for (size_t c = 0; c < COL; c++) {
 			for (size_t r = 0; r < ROW; r++) {
-				values[c][r] = args[c*COL + r];
+				values[c][r] = args[c*ROW + r];
 			}
 		}
 	}
@@ -105,7 +102,6 @@ struct mat {
 	template <size_t R>
 	VecType operator*(const vec<T, R>& v) {
 		static_assert(R == COL, "Incompatible matrices");
-
 		VecType ret;
 
 		for (size_t r = 0; r < R; r++) {
@@ -115,10 +111,10 @@ struct mat {
 		return ret;
 	}
 
-	template <size_t OROW, size_t OCOL>
-	mat<T, ROW, OCOL> operator*(const mat<T, OROW, OCOL>& other) {
+	template <size_t OCOL, size_t OROW>
+	mat<T, OCOL, ROW> operator*(const mat<T, OCOL, OROW>& other) {
 		static_assert(OROW == COL, "Incompatible matrices");
-		mat<T, ROW, OCOL> ret;
+		mat<T, OCOL, ROW> ret;
 
 		for (size_t i = 0; i < OCOL; i++) {
 			ret.values[i] = *this * other.values[i];
@@ -131,7 +127,7 @@ struct mat {
 		return values[pos];
 	}
 
-	constexpr operator std::string () {
+	constexpr operator std::string () const {
 		std::string ret = "[";
 
 		for (size_t i = 0; i < COL; i++) {
@@ -143,7 +139,6 @@ struct mat {
 		ret += "]";
 		return ret;
 	}
-
 };
 
 // namespace softrend

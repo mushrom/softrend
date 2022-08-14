@@ -308,7 +308,7 @@ struct vec {
 		return values[pos];
 	}
 
-	constexpr operator std::string () {
+	constexpr operator std::string () const {
 		std::string ret = "[";
 
 		for (size_t i = 0; i < N; i++) {
