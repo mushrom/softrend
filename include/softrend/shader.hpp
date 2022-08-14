@@ -16,7 +16,9 @@ struct baseShader {
 		const vec3& norm = in.normal;
 		const vec2& uv   = in.uv;
 
-		vec4 temp = (vec4){vert[0], vert[1], vert[2], 1.f};
+		//vec4 temp = (vec4){vert[0], vert[1], vert[2], 1.f};
+		//vec4 temp = vec4(vert[0], vert[1], vert[2], 1.f);
+		vec4 temp = vec4(vert, 1.f);
 		temp = uniforms.p
 		     * uniforms.v
 		     * uniforms.m
@@ -29,10 +31,16 @@ struct baseShader {
 		int x = adj[0]*width;
 		int y = adj[1]*height;
 
+
+		//std::cout << std::string(temp/temp.w()) << std::endl;
+		//std::cout << std::string(temp) << std::endl;
+
 		//printf("screenpos: (%d, %d)\n", x, y);
 		return (T) {
 			.screenpos = Coord {x, y},
-			.position  = (vec3) {temp[0], temp[1], temp[2]},
+			//.position  = (vec3) {temp[0], temp[1], temp[2]},
+			.ndc       = temp / temp.w(),
+			.position  = temp.xyz(),
 			.uv        = uv,
 			.depth     = adj[2]
 		};

@@ -13,6 +13,7 @@ struct vertex_buffer {
 
 struct vertexOut {
 	Coord screenpos;
+	vec4 ndc;
 	vec3 position;
 	vec3 normal;
 	vec2 uv;
@@ -35,6 +36,7 @@ struct vertexOut mix(const vertexOut& a, const vertexOut& b, float amt) {
 	return (vertexOut) {
 		// no screen position interpolation
 		//.screenpos = mix(a.screenpos, b.screenpos, amt),
+		.ndc      = mix(a.ndc, b.ndc, amt),
 		.position = mix(a.position, b.position, amt),
 		.normal   = mix(a.normal, b.normal, amt),
 		.uv       = mix(a.uv, b.uv, amt),

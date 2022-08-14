@@ -12,6 +12,15 @@ void static_error() {
 	static_assert(flag, "asdf");
 }
 
+#define swizzle_assert1(flag) \
+	static_assert(flag, "Invalid swizzle: vector requires at least 1 component");
+#define swizzle_assert2(flag) \
+	static_assert(flag, "Invalid swizzle: vector requires at least 2 components");
+#define swizzle_assert3(flag) \
+	static_assert(flag, "Invalid swizzle: vector requires at least 3 components");
+#define swizzle_assert4(flag) \
+	static_assert(flag, "Invalid swizzle: vector requires at least 4 components");
+
 template <typename T, size_t N>
 struct vec {
 	static constexpr size_t Components = N;
@@ -96,53 +105,55 @@ struct vec {
 		}
 	}
 
+	// const swizzle accessors
 	template <bool avail = 1 <= N>
-	T& x() {
-		static_assert(avail, "invalid swizzle (requires 1+ components)");
-		return values[0];
-	};
+	const T& x() const { swizzle_assert1(avail); return values[0]; };
 
 	template <bool avail = 2 <= N>
-	T& y() {
-		static_assert(avail, "invalid swizzle (requires 2+ components)");
-		return values[1];
-	};
+	const T& y() const { swizzle_assert2(avail); return values[1]; };
 
 	template <bool avail = 3 <= N>
-	T& z() {
-		static_assert(avail, "invalid swizzle (requires 3+ components)");
-		return values[2];
-	};
+	const T& z() const { swizzle_assert3(avail); return values[2]; };
 
 	template <bool avail = 4 <= N>
-	T& w() {
-		static_assert(avail, "invalid swizzle (requires 4+ components)");
-		return values[3];
-	};
+	const T& w() const { swizzle_assert4(avail); return values[3]; };
 
 	template <bool avail = 1 <= N>
-	T& r() {
-		static_assert(avail, "invalid swizzle (requires 1+ components)");
-		return values[0];
-	};
+	const T& r() const { swizzle_assert1(avail); return values[0]; };
 
 	template <bool avail = 2 <= N>
-	T& g() {
-		static_assert(avail, "invalid swizzle (requires 2+ components)");
-		return values[1];
-	};
+	const T& g() const { swizzle_assert2(avail); return values[1]; };
 
 	template <bool avail = 3 <= N>
-	T& b() {
-		static_assert(avail, "invalid swizzle (requires 3+ components)");
-		return values[2];
-	};
+	const T& b() const { swizzle_assert3(avail); return values[2]; };
 
 	template <bool avail = 4 <= N>
-	T& a() {
-		static_assert(avail, "invalid swizzle (requires 4+ components)");
-		return values[3];
-	};
+	const T& a() const { swizzle_assert4(avail); return values[3]; };
+
+	// regular swizzle accessors
+	template <bool avail = 1 <= N>
+	T& x() { swizzle_assert1(avail); return values[0]; };
+
+	template <bool avail = 2 <= N>
+	T& y() { swizzle_assert2(avail); return values[1]; };
+
+	template <bool avail = 3 <= N>
+	T& z() { swizzle_assert3(avail); return values[2]; };
+
+	template <bool avail = 4 <= N>
+	T& w() { swizzle_assert4(avail); return values[3]; };
+
+	template <bool avail = 1 <= N>
+	T& r() { swizzle_assert1(avail); return values[0]; };
+
+	template <bool avail = 2 <= N>
+	T& g() { swizzle_assert2(avail); return values[1]; };
+
+	template <bool avail = 3 <= N>
+	T& b() { swizzle_assert3(avail); return values[2]; };
+
+	template <bool avail = 4 <= N>
+	T& a() { swizzle_assert4(avail); return values[3]; };
 
 	vec operator+() const { return vec(values); }
 

@@ -6,6 +6,25 @@
 namespace softrend {
 
 mat4 perspective(float fovy, float aspect, float near, float far) {
+	float angle = fovy;
+	float scale = tan(angle * 0.5) * near;
+	//float scale = tan(angle * 0.5 * M_PI / 180) * near;
+	float r = aspect * scale;
+	float l = -r;
+
+	float t = scale;
+	float b = -t;
+	float n = near;
+	float f = far;
+
+	return mat4(
+		2*n / (r - l), 0.f, 0.f, 0.f,
+		0.f, (2*n)/(t-b), 0.f, 0.f,
+		(r + l) / (r - l), (t + b) / (t - b), -(f + n) / (f - n), -1.f,
+		0.f, 0.f, -2*f*n / (f - n), 0.f
+	);
+
+#if 0
 	float fdepth     = far - near;
 	float inv_fdepth = 1 / fdepth;
 
@@ -46,6 +65,7 @@ mat4 perspective(float fovy, float aspect, float near, float far) {
 		0, 0, 1, 0,
 	};
 	*/
+#endif
 }
 
 mat4 rotateX(float amount) {
